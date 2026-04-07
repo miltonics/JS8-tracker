@@ -496,6 +496,14 @@ html, body {
 .decay-item { display: flex; align-items: center; gap: 4px; font-size: 10px; }
 .decay-dot  { width: 7px; height: 7px; border-radius: 50%; }
 
+/* ── ANIMATED CONNECTION LINES ──────────────────────────── */
+@keyframes dashMove {
+  to { stroke-dashoffset: -20; }
+}
+.leaflet-zoom-animated path.flow-line {
+  animation: dashMove 1s linear infinite;
+}
+
 /* ── RESPONSIVE ──────────────────────────────────────── */
 @media (max-width: 900px) {
   #main { grid-template-columns: 1fr; grid-template-rows: auto 300px auto; overflow-y: auto; }
@@ -507,7 +515,7 @@ html, body {
 
 <!-- ── HEADER ── -->
 <div id="header">
-  <div id="logo">JS8<span>-</span>tracker</div>
+  <div id="logo">JS8<span>-</span>tracker <span id="version-tag" style="font-size:10px;color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span></div>
 
   <div id="status-bar">
     <div class="stat-block">
@@ -544,13 +552,18 @@ html, body {
     <div class="pill layer-inferred"        data-layer="inferred" onclick="toggleLayer(this)">Inferred</div>
   </div>
 
-  <!-- Decay window -->
-  <div style="display:flex;gap:4px;align-items:center;">
-    <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:4px;">Window</span>
-    <div class="pill active" data-mins="30"  onclick="setWindow(this)">30m</div>
-    <div class="pill"        data-mins="60"  onclick="setWindow(this)">60m</div>
-    <div class="pill"        data-mins="90"  onclick="setWindow(this)">90m</div>
-    <div class="pill"        data-mins="0"   onclick="setWindow(this)">All</div>
+  <!-- Decay window slider -->
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;">Window</span>
+    <input type="range" id="window-slider" min="1" max="1440" value="30" step="1"
+      style="width:90px;accent-color:var(--cyan);cursor:pointer;vertical-align:middle;"
+      oninput="onWindowSlider(this)">
+    <span id="window-label" style="font-size:11px;color:var(--cyan);min-width:36px;font-family:var(--mono);">30m</span>
+    <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;">
+      <input type="checkbox" id="window-all" onchange="onWindowAll(this)"
+        style="accent-color:var(--cyan);cursor:pointer;">
+      All
+    </label>
   </div>
 
   <div id="header-right">
@@ -613,6 +626,7 @@ html, body {
 <script>
 // ── CONFIG ────────────────────────────────────────────────
 const API = 'http://127.0.0.1:5000';
+const UI_VERSION = '0.2.6';
 const POLL_STATUS_MS   = 5000;
 const POLL_STATIONS_MS = 8000;
 const POLL_EVENTS_MS   = 4000;
@@ -627,6 +641,7 @@ let eventTypeFilter = 'all';
 let lastEventId     = null;
 let seenEventIds    = new Set();
 let stations        = [];
+const pendingStart  = {};   // callsign -> Date.now() when first seen as pending
 let connections     = [];
 let selectedCall    = null;
 let rxFlash         = false;
@@ -751,12 +766,35 @@ function toggleLayer(el) {
   renderMap();
 }
 
-function setWindow(el) {
-  document.querySelectorAll('[data-mins]').forEach(e => e.classList.remove('active'));
-  el.classList.add('active');
-  activeWindowMin = parseInt(el.dataset.mins);
+function fmtWindowLabel(mins) {
+  if (mins < 60) return mins + 'm';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? h + 'h' + m + 'm' : h + 'h';
+}
+
+function applyWindow(mins) {
+  activeWindowMin = mins;
   fetchStations();
   fetchConnections();
+}
+
+function onWindowSlider(el) {
+  const mins = parseInt(el.value);
+  document.getElementById('window-label').textContent = fmtWindowLabel(mins);
+  document.getElementById('window-all').checked = false;
+  applyWindow(mins);
+}
+
+function onWindowAll(el) {
+  if (el.checked) {
+    document.getElementById('window-label').textContent = 'All';
+    applyWindow(0);
+  } else {
+    const mins = parseInt(document.getElementById('window-slider').value);
+    document.getElementById('window-label').textContent = fmtWindowLabel(mins);
+    applyWindow(mins);
+  }
 }
 
 function setEventFilter(el) {
@@ -764,6 +802,7 @@ function setEventFilter(el) {
   el.classList.add('active');
   eventTypeFilter = el.dataset.etype;
   renderEvents();
+  renderMap();
 }
 
 // ── STATUS ────────────────────────────────────────────────
@@ -781,13 +820,16 @@ async function fetchStatus() {
     if (d.last_event_at) {
       document.getElementById('s-lastevt').textContent = fmtAge(d.last_event_at);
     }
+    const vtag = document.getElementById('version-tag');
+    if (vtag) vtag.textContent = `${d.build_tag || ''}  ui:${UI_VERSION}`;
     if (d.my_call && d.my_call !== MY_CALL) {
       MY_CALL = d.my_call;
       document.getElementById('my-call').textContent = d.my_call;
     }
-    if (d.my_grid && !_myMarker) {
+    if (d.my_grid) {
+      _myCall = d.my_call || MY_CALL;
+      _myGrid = d.my_grid;
       document.getElementById('my-meta').textContent = `${d.my_grid} · local station`;
-      renderMyStation(d.my_call, d.my_grid);
     }
   } catch(e) {}
 }
@@ -827,6 +869,16 @@ function renderStations() {
   // Sort: current first, then by last_heard_at
   filtered.sort((a, b) => new Date(b.last_heard_at) - new Date(a.last_heard_at));
 
+  // Record when each pending station was first seen
+  filtered.forEach(s => {
+    if (!s.best_grid && s.grid_status === 'pending' && !pendingStart[s.callsign]) {
+      pendingStart[s.callsign] = Date.now();
+    }
+    if (s.best_grid || s.grid_status === 'not_found') {
+      delete pendingStart[s.callsign];
+    }
+  });
+
   list.innerHTML = filtered.map(s => {
     const age = ageClass(s.last_heard_at);
     const ageTxt = fmtAge(s.last_heard_at);
@@ -844,7 +896,9 @@ function renderStations() {
         <div class="station-meta">
           ${s.best_grid
             ? `<span class="station-grid">${s.best_grid}</span> <span class="station-grid-src">${gridSrcLabel[s.best_grid_source]||'?'}</span>`
-            : '<span style="color:var(--text-mute)">no grid</span>'}
+            : s.grid_status === 'not_found'
+              ? '<span style="color:var(--red-dim)">no grid</span>'
+              : `<span style="color:var(--text-mute)">grid pending… <span class="pending-timer" data-call="${s.callsign}"></span></span>`}
         </div>
         ${groups.length ? `<div class="group-tags">${groups.map(g=>`<span class="group-tag">${g}</span>`).join('')}</div>` : ''}
       </div>
@@ -888,11 +942,25 @@ function renderMap() {
   markerLayer.clearLayers();
   lineLayer.clearLayers();
 
+  // Always re-pin own station after layer clear
+  if (_myCall && _myGrid) renderMyStation(_myCall, _myGrid);
+
+  // Stations visible after event-type filter
+  const filteredCalls = getFilteredCalls();
+
   const visible = _allStations.filter(s =>
-    s.callsign !== MY_CALL && activeLayers.has(s.hearing_layer) && s.best_grid
+    s.callsign !== MY_CALL &&
+    activeLayers.has(s.hearing_layer) &&
+    s.best_grid &&
+    (filteredCalls === null || filteredCalls.has(s.callsign))
   );
 
   const stationPos = {};
+  // Include own station so connection lines can reach it
+  if (_myCall && _myGrid) {
+    const myLL = gridToLatLon(_myGrid);
+    if (myLL) stationPos[_myCall] = myLL;
+  }
 
   visible.forEach(s => {
     const ll = gridToLatLon(s.best_grid);
@@ -955,7 +1023,8 @@ function renderMap() {
     `);
   });
 
-  // Draw connection lines
+  // Draw directional animated connection lines
+  const nowMs = Date.now();
   connections.forEach(c => {
     if (!activeLayers.has(c.hearing_layer)) return;
     if (c.confidence === 'low') return;
@@ -963,14 +1032,49 @@ function renderMap() {
     const b = stationPos[c.target];
     if (!a || !b) return;
 
-    const color  = c.hearing_layer === 'direct' ? '#00e57a' : (c.hearing_layer === 'reported' ? '#f0a020' : '#8060c0');
-    const weight = Math.max(1, Math.round(c.weight * 3));
-    const opacity = Math.max(0.2, c.weight * 0.7);
+    // Fade: full opacity if < 5 min old, gone by 10 min
+    const ageMins = (nowMs - new Date(c.last_seen_at).getTime()) / 60000;
+    if (ageMins > 10) return;
+    const fadeOpacity = ageMins < 5 ? 1.0 : 1.0 - ((ageMins - 5) / 5);
 
+    const color   = c.hearing_layer === 'direct' ? '#00e57a' : (c.hearing_layer === 'reported' ? '#f0a020' : '#8060c0');
+    const weight  = Math.max(1, Math.round(c.weight * 3));
+    const opacity = Math.max(0.05, c.weight * 0.7 * fadeOpacity);
+
+    // Solid base line (direction: source → target)
     L.polyline([a, b], {
-      color, weight, opacity,
-      dashArray: c.confidence === 'medium' ? '4 4' : null,
+      color, weight: Math.max(1, weight - 1), opacity: opacity * 0.4,
     }).addTo(lineLayer);
+
+    // Animated flow dash on top — moves from a to b (source to target)
+    const flowLine = L.polyline([a, b], {
+      color, weight,
+      opacity,
+      dashArray: '8 12',
+      dashOffset: '0',
+      className: 'flow-line',
+    }).addTo(lineLayer);
+
+    // Arrowhead at target end using a small rotated marker
+    const midLat = (a[0] + b[0]) / 2;
+    const midLon = (a[1] + b[1]) / 2;
+    const angle  = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+    const arrowIcon = L.divIcon({
+      className: '',
+      html: `<div style="
+        width:0;height:0;
+        border-left:5px solid transparent;
+        border-right:5px solid transparent;
+        border-bottom:9px solid ${color};
+        opacity:${opacity};
+        transform:rotate(${angle + 90}deg);
+        transform-origin:center;
+        pointer-events:none;
+      "></div>`,
+      iconSize: [10, 9],
+      iconAnchor: [5, 4],
+    });
+    L.marker([midLat, midLon], { icon: arrowIcon, interactive: false }).addTo(lineLayer);
   });
 
   document.getElementById('s-conns').textContent = connections.length;
@@ -1084,10 +1188,25 @@ function flashRx() {
   flashRx._t = setTimeout(() => ind.classList.remove('live'), 1500);
 }
 
+// ── EVENT FILTER → MAP CALLSIGN SET ─────────────────────────
+function getFilteredCalls() {
+  if (eventTypeFilter === 'all') return null;
+  const calls = new Set();
+  _allEvents.forEach(e => {
+    if (eventTypeGroup(e.event_type) !== eventTypeFilter) return;
+    if (e.source_station) calls.add(e.source_station);
+    if (e.target_station) calls.add(e.target_station);
+  });
+  return calls;
+}
+
 // ── OWN STATION MAP PIN ─────────────────────────────────────
 let _myMarker = null;
+let _myCall = '';
+let _myGrid = '';
 function renderMyStation(call, grid) {
-  if (_myMarker) { markerLayer.removeLayer(_myMarker); }
+  if (!call || !grid) return;
+  if (_myMarker) { markerLayer.removeLayer(_myMarker); _myMarker = null; }
   const ll = gridToLatLon(grid);
   if (!ll) return;
   const icon = L.divIcon({
@@ -1115,6 +1234,19 @@ function renderMyStation(call, grid) {
   });
   L.marker(ll, { icon: label, interactive: false }).addTo(markerLayer);
 }
+
+// ── PENDING TIMER TICK ───────────────────────────────────
+function tickPendingTimers() {
+  const now = Date.now();
+  document.querySelectorAll('.pending-timer').forEach(el => {
+    const call = el.dataset.call;
+    const start = pendingStart[call];
+    if (!start) return;
+    const secs = Math.floor((now - start) / 1000);
+    el.textContent = secs + 's';
+  });
+}
+setInterval(tickPendingTimers, 1000);
 
 // ── POLL LOOPS ────────────────────────────────────────────
 async function pollAll() {
