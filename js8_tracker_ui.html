@@ -669,24 +669,7 @@ L.control.attribution({ prefix: '' }).addTo(map);
 
 const markerLayer = L.layerGroup().addTo(map);
 
-// Fit-to-bounds button
-const FitControl = L.Control.extend({
-  options: { position: 'topleft' },
-  onAdd: function() {
-    const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-fitbounds');
-    const a = L.DomUtil.create('a', '', div);
-    a.href = '#';
-    a.title = 'Fit map to all stations';
-    a.innerHTML = '⊡';
-    a.style.fontWeight = 'bold';
-    L.DomEvent.on(a, 'click', function(e) {
-      L.DomEvent.preventDefault(e);
-      fitMapToStations();
-    });
-    return div;
-  }
-});
-new FitControl().addTo(map);
+
 const lineLayer   = L.layerGroup().addTo(map);
 
 // ── MAIDENHEAD → LAT/LON ─────────────────────────────────
