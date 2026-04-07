@@ -785,9 +785,8 @@ async function fetchStatus() {
       MY_CALL = d.my_call;
       document.getElementById('my-call').textContent = d.my_call;
     }
-    if (d.my_grid) {
+    if (d.my_grid && !_myMarker) {
       document.getElementById('my-meta').textContent = `${d.my_grid} · local station`;
-      // Pin own station on map if we have a grid
       renderMyStation(d.my_call, d.my_grid);
     }
   } catch(e) {}
