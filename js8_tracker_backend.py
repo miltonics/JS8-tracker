@@ -53,7 +53,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.2.7"
+BUILD_TAG = "js8-tracker-0.2.7.1"
 
 # HamQTH — same credential file the old bridge used
 HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
@@ -529,60 +529,60 @@ def _apply_lookup_grid(callsign: str, grid: str, timestamp: str) -> None:
 
 
 def _lookup_worker() -> None:
-    """Background thread: drains the lookup queue, calls HamQTH, updates DB."""
-    global _hamqth_client
+    """Background thread: drains the lookup queue, calls HamQTH then callook fallback."""
     while True:
         callsign = _lookup_queue.get()
         try:
-            # Check cache first (another event may have already resolved it)
+            # Check cache first — may already be resolved by a prior event
             found, grid = _grid_cache.get(callsign)
             if found:
                 if grid:
                     _apply_lookup_grid(callsign, grid, utc_now())
-                _lookup_queue.task_done()
                 continue
 
-            # Even without HamQTH, try callook fallback below
-            if _hamqth_client is None and True:
-                pass  # fall through to lookup attempt
-
+            # Try HamQTH first
+            grid = None
             try:
-                grid = _hamqth_client.lookup_grid(callsign) if _hamqth_client else None
+                if _hamqth_client:
+                    grid = _hamqth_client.lookup_grid(callsign)
+                    if grid:
+                        print(f"[js8-tracker] lookup {callsign} -> {grid} (HamQTH)", flush=True)
+            except Exception as exc:
+                print(f"[js8-tracker] HamQTH error for {callsign}: {exc}", flush=True)
 
-                # Fallback to callook.info if HamQTH returned nothing
-                if not grid:
+            # Fallback to callook.info if HamQTH returned nothing
+            if not grid:
+                try:
                     grid = callook_lookup_grid(callsign)
                     if grid:
-                        print(f"[js8-tracker] lookup {callsign} -> {grid} (callook fallback)", flush=True)
+                        print(f"[js8-tracker] lookup {callsign} -> {grid} (callook)", flush=True)
+                except Exception as exc:
+                    print(f"[js8-tracker] callook error for {callsign}: {exc}", flush=True)
 
-                _grid_cache.put(callsign, grid)
-                if grid:
-                    _apply_lookup_grid(callsign, grid, utc_now())
-                    if _hamqth_client:
-                        print(f"[js8-tracker] lookup {callsign} -> {grid}", flush=True)
-                else:
-                    print(f"[js8-tracker] lookup {callsign} -> not found", flush=True)
-                    with STATUS_LOCK:
-                        STATUS["lookup_misses"] += 1
-                    # Mark station so UI can show "not found" instead of "pending"
-                    con2 = sqlite3.connect(DB_PATH)
-                    try:
-                        con2.execute(
-                            "UPDATE stations SET grid_status = 'not_found' WHERE callsign = ? AND best_grid IS NULL",
-                            (callsign,)
-                        )
-                        con2.commit()
-                    finally:
-                        con2.close()
-            except Exception as exc:
-                print(f"[js8-tracker] lookup error {callsign}: {exc}", flush=True)
-                _grid_cache.put(callsign, None)
+            # Store result and update DB
+            _grid_cache.put(callsign, grid)
+            if grid:
+                _apply_lookup_grid(callsign, grid, utc_now())
+            else:
+                print(f"[js8-tracker] lookup {callsign} -> not found", flush=True)
                 with STATUS_LOCK:
-                    STATUS["lookup_errors"] += 1
+                    STATUS["lookup_misses"] += 1
+                con2 = sqlite3.connect(DB_PATH)
+                try:
+                    con2.execute(
+                        "UPDATE stations SET grid_status = 'not_found' "
+                        "WHERE callsign = ? AND best_grid IS NULL",
+                        (callsign,)
+                    )
+                    con2.commit()
+                finally:
+                    con2.close()
 
+        except Exception as exc:
+            print(f"[js8-tracker] lookup worker unexpected error: {exc}", flush=True)
         finally:
             _lookup_queue.task_done()
-        # Small delay between lookups to be polite to HamQTH
+
         time.sleep(0.1)
 
 
