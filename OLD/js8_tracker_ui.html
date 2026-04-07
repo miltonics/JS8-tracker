@@ -266,12 +266,6 @@ html, body {
   background: #080c10;
 }
 
-/* Custom map controls */
-.leaflet-control-fitbounds a {
-  font-size: 16px !important;
-  line-height: 26px !important;
-}
-
 /* Leaflet dark overrides */
 .leaflet-tile-pane { filter: brightness(0.45) saturate(0.4) hue-rotate(180deg); }
 .leaflet-control-zoom a {
@@ -632,7 +626,7 @@ html, body {
 <script>
 // ── CONFIG ────────────────────────────────────────────────
 const API = 'http://127.0.0.1:5000';
-// version shown from backend BUILD_TAG only
+const UI_VERSION = '0.2.6';
 const POLL_STATUS_MS   = 5000;
 const POLL_STATIONS_MS = 8000;
 const POLL_EVENTS_MS   = 4000;
@@ -668,25 +662,6 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 L.control.attribution({ prefix: '' }).addTo(map);
 
 const markerLayer = L.layerGroup().addTo(map);
-
-// Fit-to-bounds button
-const FitControl = L.Control.extend({
-  options: { position: 'topleft' },
-  onAdd: function() {
-    const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-fitbounds');
-    const a = L.DomUtil.create('a', '', div);
-    a.href = '#';
-    a.title = 'Fit map to all stations';
-    a.innerHTML = '⊡';
-    a.style.fontWeight = 'bold';
-    L.DomEvent.on(a, 'click', function(e) {
-      L.DomEvent.preventDefault(e);
-      fitMapToStations();
-    });
-    return div;
-  }
-});
-new FitControl().addTo(map);
 const lineLayer   = L.layerGroup().addTo(map);
 
 // ── MAIDENHEAD → LAT/LON ─────────────────────────────────
@@ -846,7 +821,7 @@ async function fetchStatus() {
       document.getElementById('s-lastevt').textContent = fmtAge(d.last_event_at);
     }
     const vtag = document.getElementById('version-tag');
-    if (vtag) vtag.textContent = d.build_tag || '';
+    if (vtag) vtag.textContent = `${d.build_tag || ''}  ui:${UI_VERSION}`;
     if (d.my_call && d.my_call !== MY_CALL) {
       MY_CALL = d.my_call;
       document.getElementById('my-call').textContent = d.my_call;
@@ -1080,7 +1055,26 @@ function renderMap() {
       className: 'flow-line',
     }).addTo(lineLayer);
 
-
+    // Arrowhead at target end using a small rotated marker
+    const midLat = (a[0] + b[0]) / 2;
+    const midLon = (a[1] + b[1]) / 2;
+    const angle  = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+    const arrowIcon = L.divIcon({
+      className: '',
+      html: `<div style="
+        width:0;height:0;
+        border-left:5px solid transparent;
+        border-right:5px solid transparent;
+        border-bottom:9px solid ${color};
+        opacity:${opacity};
+        transform:rotate(${angle + 90}deg);
+        transform-origin:center;
+        pointer-events:none;
+      "></div>`,
+      iconSize: [10, 9],
+      iconAnchor: [5, 4],
+    });
+    L.marker([midLat, midLon], { icon: arrowIcon, interactive: false }).addTo(lineLayer);
   });
 
   document.getElementById('s-conns').textContent = connections.length;
@@ -1194,24 +1188,6 @@ function flashRx() {
   flashRx._t = setTimeout(() => ind.classList.remove('live'), 1500);
 }
 
-// ── FIT MAP TO ALL STATIONS ──────────────────────────────
-function fitMapToStations() {
-  const points = [];
-  if (_myGrid) {
-    const ll = gridToLatLon(_myGrid);
-    if (ll) points.push(ll);
-  }
-  _allStations.forEach(s => {
-    if (s.best_grid) {
-      const ll = gridToLatLon(s.best_grid);
-      if (ll) points.push(ll);
-    }
-  });
-  if (points.length === 0) return;
-  if (points.length === 1) { map.setView(points[0], 8); return; }
-  map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
-}
-
 // ── EVENT FILTER → MAP CALLSIGN SET ─────────────────────────
 function getFilteredCalls() {
   if (eventTypeFilter === 'all') return null;
@@ -1295,41 +1271,6 @@ setInterval(() => {
 
 // Map re-renders on zoom to show/hide labels
 map.on('zoomend', renderMap);
-
-// ── FIT ALL STATIONS BUTTON ───────────────────────────────
-const FitControl = L.Control.extend({
-  options: { position: 'topleft' },
-  onAdd: function() {
-    const btn = L.DomUtil.create('a', 'leaflet-bar leaflet-control');
-    btn.innerHTML = '&#8862;';
-    btn.href = '#';
-    btn.title = 'Fit all stations';
-    btn.style.cssText = 'font-size:16px;line-height:26px;text-align:center;display:block;width:26px;height:26px;background:var(--bg2);color:var(--cyan);border-color:var(--border);text-decoration:none;';
-    btn.onmouseover = () => btn.style.color = '#fff';
-    btn.onmouseout  = () => btn.style.color = 'var(--cyan)';
-    L.DomEvent.on(btn, 'click', L.DomEvent.stop);
-    L.DomEvent.on(btn, 'click', fitAllStations);
-    return btn;
-  }
-});
-new FitControl().addTo(map);
-
-function fitAllStations() {
-  const points = [];
-  if (_myCall && _myGrid) {
-    const ll = gridToLatLon(_myGrid);
-    if (ll) points.push(ll);
-  }
-  _allStations.forEach(s => {
-    if (s.best_grid) {
-      const ll = gridToLatLon(s.best_grid);
-      if (ll) points.push(ll);
-    }
-  });
-  if (points.length === 0) return;
-  if (points.length === 1) { map.setView(points[0], 8); return; }
-  map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 10 });
-}
 </script>
 </body>
 </html>
