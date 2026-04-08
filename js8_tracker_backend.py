@@ -49,13 +49,17 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.3.4"
+BUILD_TAG = "js8-tracker-0.4.0"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
 DB_PRUNE_CONNECTIONS_DAYS = 7   # prune connections not seen for this long
 DB_PRUNE_STATIONS_DAYS    = 30  # prune stations not heard for this long
 DB_PRUNE_INTERVAL_HOURS   = 1   # how often to run pruning
+
+# Fragment reassembly — JS8Call splits long messages at ~12 char boundaries
+FRAG_TIMEOUT_SECS  = 2.0   # flush buffer if no new fragment arrives within this window
+FRAG_MAX_LEN       = 500   # safety cap on reassembled message length
 
 # HamQTH — same credential file the old bridge used
 HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
@@ -1484,6 +1488,90 @@ def maybe_forward_udp(packet: bytes) -> None:
 # UDP listener
 # ============================================================
 
+# ============================================================
+# Fragment reassembly
+# ============================================================
+
+# Regex: text starts with a plausible callsign or @GROUP — i.e. a message header
+_FRAG_HEADER_RE = re.compile(
+    r"^(?:[A-Z0-9]{3,10}(?:/[A-Z0-9]+)?\s*:|@[A-Z0-9_]+\s)",
+    re.I
+)
+
+def _is_fragment_header(text: str) -> bool:
+    """Return True if text looks like the start of a new message."""
+    return bool(_FRAG_HEADER_RE.match(text.strip()))
+
+
+class FragmentBuffer:
+    """
+    Accumulates JS8Call message fragments and flushes when a new message
+    starts or the timeout expires.
+
+    JS8Call splits long decoded text at ~12-character boundaries and emits
+    each chunk as a separate UDP decode packet. Fragments arrive in order
+    with no sequence numbers. A new message always starts with a callsign
+    or @GROUP token; continuation fragments do not.
+    """
+    def __init__(self) -> None:
+        self._buf: str = ""
+        self._last_at: float = 0.0
+        self._lock = threading.Lock()
+
+    def push(self, text: str) -> Optional[str]:
+        """
+        Add a text fragment. Returns a completed message if one is ready,
+        otherwise None.
+
+        Rules:
+        - If text looks like a new message header AND the buffer is non-empty,
+          flush the buffer first (return it), then start a new buffer with text.
+        - If text looks like a new message header AND buffer is empty,
+          start buffering it (it may have continuations).
+        - If text does NOT look like a header, it's a continuation — append.
+        - If FRAG_TIMEOUT_SECS has elapsed since last fragment, flush and restart.
+        """
+        now = time.time()
+        with self._lock:
+            # Timeout: flush stale buffer
+            if self._buf and (now - self._last_at) > FRAG_TIMEOUT_SECS:
+                flushed = self._buf.strip()
+                self._buf = text
+                self._last_at = now
+                return flushed if flushed else None
+
+            is_header = _is_fragment_header(text)
+
+            if is_header and self._buf:
+                # New message starting — flush current buffer
+                flushed = self._buf.strip()
+                self._buf = text
+                self._last_at = now
+                return flushed if flushed else None
+            else:
+                # Continuation or first fragment — append
+                self._buf += text
+                self._last_at = now
+                # Safety cap
+                if len(self._buf) > FRAG_MAX_LEN:
+                    flushed = self._buf.strip()
+                    self._buf = ""
+                    return flushed
+                return None
+
+    def flush(self) -> Optional[str]:
+        """Force-flush whatever is in the buffer."""
+        with self._lock:
+            if self._buf:
+                flushed = self._buf.strip()
+                self._buf = ""
+                return flushed
+            return None
+
+
+_frag_buffer = FragmentBuffer()
+
+
 def udp_listener() -> None:
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1499,11 +1587,26 @@ def udp_listener() -> None:
         note_packet(parse_result)
 
         if not parse_result.text:
+            # No text in this packet — could mean end of a fragment sequence.
+            # Flush buffer on a short timeout naturally; nothing to do here.
             continue
 
-        print(f"[js8-tracker] decode text={parse_result.text!r}", flush=True)
+        raw = parse_result.text
 
-        event = classify_line(parse_result.text)
+        # Push through fragment reassembler
+        completed = _frag_buffer.push(raw)
+        if completed is None:
+            # Fragment buffered, waiting for more
+            print(f"[js8-tracker] fragment buffered: {raw!r}", flush=True)
+            continue
+
+        # We have a completed (possibly reassembled) message
+        if completed != raw:
+            print(f"[js8-tracker] reassembled: {completed!r}", flush=True)
+        else:
+            print(f"[js8-tracker] decode text={completed!r}", flush=True)
+
+        event = classify_line(completed)
         if event is None:
             note_drop()
             continue
@@ -1985,6 +2088,22 @@ def run_parser_selfcheck() -> None:
 
     finally:
         con.close()
+
+    # Fragment reassembly tests
+    fb = FragmentBuffer()
+    assert fb.push("W4CAT: KE8SWO HEARING ") is None   # buffered
+    assert fb.push("K9BTR KU4B ") is None               # continuation buffered
+    assert fb.push("KB1MCT KD8G") is None               # continuation buffered
+    result = fb.push("KD8GIJ: KE8SWO HEARING ")         # new header — flushes previous
+    assert result is not None, "Fragment buffer should have flushed"
+    assert "W4CAT: KE8SWO HEARING K9BTR KU4B KB1MCT KD8G" in result, f"Unexpected reassembly: {result!r}"
+    _ = fb.flush()  # clean up
+
+    # Verify reassembled HEARING classifies with extras
+    reassembled = "W4CAT: KE8SWO HEARING K9BTR KU4B KB1MCT KD8GIJ"
+    re_event = classify_line(reassembled)
+    assert re_event and re_event.event_type == "directed_hearing"
+    assert re_event.parser_note and "K9BTR" in re_event.parser_note, f"Extras not parsed: {re_event.parser_note}"
 
     print("[js8-tracker] self-check passed", flush=True)
 
