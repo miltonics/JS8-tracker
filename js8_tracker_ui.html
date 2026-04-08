@@ -310,7 +310,10 @@ html, body {
   border-bottom: 1px solid var(--border);
   line-height: 1.5;
   animation: fadeIn 0.3s ease;
+  transition: background 0.15s;
 }
+.event-row:hover { background: var(--bg3); }
+.event-row-selected { background: var(--blue-dim) !important; border-left: 2px solid var(--blue); }
 
 @keyframes fadeIn {
   from { opacity: 0; background: var(--blue-dim); }
@@ -506,6 +509,16 @@ html, body {
 @keyframes dashMove {
   to { stroke-dashoffset: -20; }
 }
+@keyframes markerBlink {
+  0%   { transform: scale(1);   opacity: 1; }
+  25%  { transform: scale(2.2); opacity: 0.9; }
+  50%  { transform: scale(1.4); opacity: 1; }
+  75%  { transform: scale(2.0); opacity: 0.9; }
+  100% { transform: scale(1);   opacity: 1; }
+}
+.blink-marker {
+  animation: markerBlink 0.7s ease-in-out;
+}
 .leaflet-zoom-animated path.flow-line {
   animation: dashMove 1s linear infinite;
 }
@@ -650,6 +663,8 @@ let stations        = [];
 const pendingStart  = {};   // callsign -> Date.now() when first seen as pending
 let connections     = [];
 let selectedCall    = null;
+let selectedEvent   = null;  // {src, dst} of clicked event row
+let blinkingCalls   = new Set();  // calls currently mid-blink
 let rxFlash         = false;
 
 // ── MAP INIT ──────────────────────────────────────────────
@@ -919,6 +934,45 @@ function renderStations() {
   }).join('');
 }
 
+function selectEvent(src, dst) {
+  // Toggle off if same event clicked again
+  if (selectedEvent && selectedEvent.src === src && selectedEvent.dst === dst) {
+    selectedEvent = null;
+    blinkingCalls.clear();
+    renderStations();
+    renderMap();
+    return;
+  }
+
+  selectedEvent = { src, dst };
+  selectedCall  = null;  // clear station selection
+
+  // Trigger blink
+  blinkingCalls = new Set([src, dst].filter(Boolean));
+  renderStations();
+  renderMap();
+  setTimeout(() => { blinkingCalls.clear(); renderMap(); }, 750);
+
+  // Fly map to fit both stations
+  const points = [];
+  [src, dst].filter(Boolean).forEach(call => {
+    const s = _allStations.find(x => x.callsign === call);
+    if (s && s.best_grid) {
+      const ll = gridToLatLon(s.best_grid);
+      if (ll) points.push(ll);
+    }
+    if (call === _myCall && _myGrid) {
+      const ll = gridToLatLon(_myGrid);
+      if (ll) points.push(ll);
+    }
+  });
+  if (points.length === 1) {
+    map.flyTo(points[0], Math.max(map.getZoom(), 7), { duration: 0.8 });
+  } else if (points.length >= 2) {
+    map.flyToBounds(L.latLngBounds(points), { padding: [60, 60], maxZoom: 10, duration: 0.8 });
+  }
+}
+
 function selectStation(call) {
   selectedCall = selectedCall === call ? null : call;
   renderStations();
@@ -981,25 +1035,31 @@ function renderMap() {
     const size     = isSelected ? 14 : 10;
     const opacity  = age === 'stale' ? 0.4 : 1.0;
 
+    const isBlink  = blinkingCalls.has(s.callsign);
+    const isEventSel = selectedEvent && (s.callsign === selectedEvent.src || s.callsign === selectedEvent.dst);
+    const dotSize  = (isSelected || isEventSel) ? 14 : 10;
+    const dotBorder = (isSelected || isEventSel) ? '2px solid #fff' : '1px solid rgba(0,0,0,0.5)';
+    const dotGlow   = (isSelected || isEventSel) ? 8 : 4;
+
     const icon = L.divIcon({
-      className: '',
+      className: isBlink ? 'blink-marker' : '',
       html: `<div style="
-        width:${size}px;height:${size}px;
+        width:${dotSize}px;height:${dotSize}px;
         background:${color};
-        border:${isSelected ? '2px solid #fff' : '1px solid rgba(0,0,0,0.5)'};
+        border:${dotBorder};
         border-radius:50%;
         opacity:${opacity};
-        box-shadow:0 0 ${isSelected ? 8 : 4}px ${color};
+        box-shadow:0 0 ${dotGlow}px ${color};
         cursor:pointer;
       "></div>`,
-      iconSize: [size, size],
-      iconAnchor: [size/2, size/2],
+      iconSize: [dotSize, dotSize],
+      iconAnchor: [dotSize/2, dotSize/2],
     });
 
     const marker = L.marker(ll, { icon }).addTo(markerLayer);
 
-    // Label for selected or large enough zoom
-    if (isSelected || map.getZoom() >= 6) {
+    // Label for selected, event-selected, or large enough zoom
+    if (isSelected || isEventSel || map.getZoom() >= 6) {
       const label = L.divIcon({
         className: '',
         html: `<div style="
@@ -1031,6 +1091,10 @@ function renderMap() {
     `);
   });
 
+  // Determine highlighted connection for selected event
+  const hlSrc = selectedEvent ? selectedEvent.src : null;
+  const hlDst = selectedEvent ? selectedEvent.dst : null;
+
   // Draw directional animated connection lines
   const nowMs = Date.now();
   connections.forEach(c => {
@@ -1049,15 +1113,23 @@ function renderMap() {
     const weight  = Math.max(1, Math.round(c.weight * 3));
     const opacity = Math.max(0.05, c.weight * 0.7 * fadeOpacity);
 
+    // Highlight if this connection matches the selected event
+    const isHlConn = hlSrc && hlDst && (
+      (c.source === hlSrc && c.target === hlDst) ||
+      (c.source === hlDst && c.target === hlSrc)
+    );
+    const lineOpacity = isHlConn ? Math.min(1, opacity * 2) : opacity;
+    const lineWeight  = isHlConn ? weight + 2 : weight;
+
     // Solid base line (direction: source → target)
     L.polyline([a, b], {
-      color, weight: Math.max(1, weight - 1), opacity: opacity * 0.4,
+      color, weight: Math.max(1, lineWeight - 1), opacity: lineOpacity * 0.4,
     }).addTo(lineLayer);
 
     // Animated flow dash on top — moves from a to b (source to target)
     const flowLine = L.polyline([a, b], {
-      color, weight,
-      opacity,
+      color, weight: lineWeight,
+      opacity: lineOpacity,
       dashArray: '8 12',
       dashOffset: '0',
       className: 'flow-line',
@@ -1151,6 +1223,7 @@ function renderEvents() {
   }
 
   list.innerHTML = filtered.map(e => {
+    const isSelEvt = selectedEvent && selectedEvent.src === e.source_station && selectedEvent.dst === e.target_station;
     const srcHtml = e.source_station
       ? `<span class="event-call src">${e.source_station}</span> → ` : '';
     const dstHtml = e.target_station
@@ -1160,7 +1233,7 @@ function renderEvents() {
     const snrHtml = e.snr !== null && e.snr !== undefined
       ? `<span class="event-snr">${e.snr > 0 ? '+' : ''}${e.snr}dB</span>` : '';
 
-    return `<div class="event-row">
+    return `<div class="event-row ${isSelEvt ? 'event-row-selected' : ''}" style="cursor:pointer;" onclick="selectEvent('${e.source_station||''}','${e.target_station||e.group_name||''}')">
       <span class="event-time">${fmtTime(e.timestamp)}</span>
       <span class="event-type-badge type-${e.event_type}">${fmtEventType(e.event_type)}</span>
       ${srcHtml}${dstHtml}${grpHtml}${snrHtml}
