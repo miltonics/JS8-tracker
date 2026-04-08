@@ -1082,15 +1082,25 @@ function renderGroupDetail(g) {
   ).join('');
 }
 
+let _savedMapView = null;  // {center, zoom} saved before group selection
+
 function selectGroup(name) {
   if (selectedGroup === name || name === null) {
+    // Deselect — restore previous map view
     selectedGroup = null;
     document.getElementById('group-detail').classList.remove('visible');
     document.getElementById('group-strip').querySelectorAll('.group-pill').forEach(p => p.classList.remove('group-pill-active'));
+    if (_savedMapView) {
+      map.flyTo(_savedMapView.center, _savedMapView.zoom, { duration: 0.8 });
+      _savedMapView = null;
+    }
     renderStations();
     renderMap();
     return;
   }
+
+  // Save current map view before flying away
+  _savedMapView = { center: map.getCenter(), zoom: map.getZoom() };
 
   selectedGroup = name;
   selectedCall  = null;
