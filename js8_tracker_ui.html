@@ -349,7 +349,8 @@ html, body {
 .type-activity_inferred  { background: #181820; color: var(--text-mute); }
 .type-directed_call      { background: #202040; color: #8888ff; }
 .type-directed_relay     { background: #202040; color: #8888ff; }
-.type-directed_hearing   { background: #202040; color: #8888ff; }
+.type-directed_hearing         { background: #002828; color: #20d0d0; }
+.type-directed_hearing_query  { background: #202040; color: #8888ff; }
 .type-unknown            { background: #181818; color: var(--text-mute); }
 
 .event-call {
@@ -982,7 +983,8 @@ function fmtEventType(etype) {
     broadcast_cq:      'CQ',
     directed_call:     'CALL',
     directed_relay:    'RELAY',
-    directed_hearing:  'HEAR',
+    directed_hearing:       'HEAR',
+    directed_hearing_query: 'HEAR?',
     activity_direct:   'ACT·D',
     activity_inferred: 'ACT·I',
     unknown:           '?',

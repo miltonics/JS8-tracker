@@ -53,7 +53,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.3.2"
+BUILD_TAG = "js8-tracker-0.3.3"
 
 # HamQTH — same credential file the old bridge used
 HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
@@ -133,7 +133,8 @@ CONNECTION_BASE_WEIGHTS: dict[str, float] = {
     "directed_grid":     0.9,
     "directed_status":   0.9,
     "directed_relay":    0.9,
-    "directed_hearing":  0.8,
+    "directed_hearing":        0.9,  # explicit confirmed hearing
+    "directed_hearing_query":  0.7,
     "directed_call":     0.8,
     "heartbeat_report":  0.8,
     "snr_report":        0.8,
@@ -161,8 +162,9 @@ class EventType(str, Enum):
     DIRECTED_GRID = "directed_grid"
     DIRECTED_STATUS = "directed_status"
     DIRECTED_RELAY  = "directed_relay"
-    DIRECTED_HEARING = "directed_hearing"
-    DIRECTED_CALL   = "directed_call"
+    DIRECTED_HEARING       = "directed_hearing"
+    DIRECTED_HEARING_QUERY = "directed_hearing_query"
+    DIRECTED_CALL           = "directed_call"
     BROADCAST_GROUP = "broadcast_group"
     BROADCAST_CQ = "broadcast_cq"
     ACTIVITY_DIRECT = "activity_direct"
@@ -763,7 +765,8 @@ EVENT_TO_CONNECTION_TYPE: dict[str, str] = {
     "directed_grid":     "grid",
     "directed_status":   "status",
     "directed_relay":    "directed",
-    "directed_hearing":  "directed",
+    "directed_hearing":        "reported_heard",
+    "directed_hearing_query":  "query",
     "directed_call":     "directed",
     "broadcast_group":   "broadcast",
     "broadcast_cq":      "broadcast",
@@ -1012,6 +1015,32 @@ def store_event(event: ParsedEvent) -> None:
                 event.event_type != EventType.UNKNOWN.value):
             upsert_connection(con, event)
 
+        # HEARING extras: create reported_heard connections for each extra station
+        if (event.event_type == EventType.DIRECTED_HEARING.value and
+                event.parser_note and event.parser_note.startswith("also heard:")):
+            extras = event.parser_note.replace("also heard:", "").strip().split()
+            for extra_call in extras:
+                extra_call = extra_call.upper()
+                # Upsert the extra station as reported
+                upsert_station(con, extra_call, event, "target")
+                # Create a synthetic connection: source heard extra_call
+                from dataclasses import replace as dc_replace
+                extra_event = ParsedEvent(
+                    id=event.id + f"_extra_{extra_call}",
+                    timestamp=event.timestamp,
+                    raw_text=event.raw_text,
+                    event_type=EventType.DIRECTED_HEARING.value,
+                    source_station=event.source_station,
+                    target_station=extra_call,
+                    group_name=None,
+                    snr=None,
+                    hearing_layer="reported",
+                    confidence="medium",
+                    grid_in_text=None,
+                    parser_note=None,
+                )
+                upsert_connection(con, extra_event)
+
         # Phase 2: upsert group
         if event.group_name:
             upsert_group(con, event)
@@ -1250,10 +1279,24 @@ def classify_line(raw_text: str) -> Optional[ParsedEvent]:
             event_type = EventType.DIRECTED_STATUS.value
             hearing_layer = "reported"
             confidence = "medium"
-        elif has_token("HEARING", "HEARING?") and source_station and target_station:
-            event_type = EventType.DIRECTED_HEARING.value
+        elif re.search(r"\bHEARING\?", right_text) and source_station and target_station:
+            # Query form: "can you hear me?"
+            event_type = EventType.DIRECTED_HEARING_QUERY.value
             hearing_layer = "reported"
             confidence = "medium"
+        elif re.search(r"\bHEARING\b(?!\?)", right_text) and source_station and target_station:
+            # Statement form: "I can hear you" — explicit confirmed reception
+            event_type = EventType.DIRECTED_HEARING.value
+            hearing_layer = "reported"
+            confidence = "high"
+            # Parse any additional callsigns after HEARING as also-heard stations
+            # e.g. "A: B HEARING C D E" means A heard B, C, D, and E
+            hearing_extras = [
+                t for t in right_tokens
+                if looks_like_callsign(t) and t != target_station
+            ]
+            if hearing_extras:
+                parser_note = f"also heard: {' '.join(hearing_extras)}"
         elif has_token("RELAY") and source_station and target_station:
             event_type = EventType.DIRECTED_RELAY.value
             hearing_layer = "reported"
@@ -1796,6 +1839,18 @@ def run_parser_selfcheck() -> None:
     assert results[5] and results[5].source_station == "KC7OU" and results[5].target_station == "NC4BD"
     assert results[6] and results[6].source_station == "KM4JRD" and results[6].target_station == "ND7M"
     assert results[7] is None
+
+    # HEARING classification checks
+    h1 = classify_line("W4CAT: KE8SWO HEARING")
+    assert h1 and h1.event_type == EventType.DIRECTED_HEARING.value, f"Expected directed_hearing, got {h1.event_type if h1 else None}"
+    assert h1.confidence == "high", f"HEARING should be high confidence, got {h1.confidence}"
+
+    h2 = classify_line("VE3ICH: KC1NNR HEARING?")
+    assert h2 and h2.event_type == EventType.DIRECTED_HEARING_QUERY.value, f"Expected directed_hearing_query, got {h2.event_type if h2 else None}"
+
+    h3 = classify_line("W4CAT: KE8SWO HEARING KU4B W0MQD")
+    assert h3 and h3.event_type == EventType.DIRECTED_HEARING.value
+    assert h3.parser_note and "KU4B" in h3.parser_note, f"Expected extras in note, got {h3.parser_note}"
 
     pkt = build_sample_decode_packet("KM4JRD: KC1WDO HEARTBEAT SNR +10")
     parsed = parse_wsjtx_packet(pkt)
