@@ -1,0 +1,15 @@
+[Unit]
+Description=JS8-tracker backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/milton/radio/js8-tracker
+ExecStart=/home/milton/radio/js8-tracker/venv/bin/python3 /home/milton/radio/js8-tracker/js8_tracker_backend.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
