@@ -237,7 +237,7 @@ Every time you want to run JS8-tracker:
 5. `python3 js8_tracker_backend.py`
 6. Open browser to http://127.0.0.1:5000
 
-The database (`js8_tracker.db`) keeps history between sessions. Delete it to start fresh.
+The database (`js8_tracker.db`) keeps history between sessions and is pruned automatically. Delete it to start completely fresh.
 
 ---
 
@@ -336,7 +336,7 @@ Versions follow `0.phase.feature.patch`:
 ## Known limitations
 
 - callook.info covers US callsigns only. Non-US stations without HamQTH stay pending until they transmit a grid.
-- The database grows indefinitely. Delete `js8_tracker.db` to start fresh. Automatic pruning is planned.
+- The database is pruned automatically every hour. Retention defaults: events/connections 7 days, stations 30 days. Adjust `DB_PRUNE_*` constants at the top of the backend.
 - Only one process can bind UDP port 2237 at a time.
 - Windows support is functional but less tested than Linux.
 

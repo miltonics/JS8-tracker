@@ -25,24 +25,20 @@ from pydantic import BaseModel
 import uvicorn
 
 # ============================================================
-# JS8-tracker Phase 2 Backend (with HamQTH lookup)
+# JS8-tracker backend
 #
-# Phase 2 additions over Phase 1:
-# - stations table + upsert with grid priority rules
-# - station_grids table (all known grids per callsign)
-# - connections table + weight aggregation
-# - groups table
-# - GET /api/stations  (confidence, hearing, active_only, minutes)
-# - GET /api/connections (confidence, types, minutes, min_weight)
-# - GET /api/groups
+# User config: set MYCALL near the top of this file.
 #
-# Lookup additions:
-# - HamQTHClient — session-auth XML API, same as old bridge
-# - Credentials loaded from ~/.config/js8_gt_bridge/hamqth.json
-#   (same file the old bridge used — no re-entry needed)
-# - Background lookup worker thread with a queue
-# - 7-day in-memory grid cache; failed lookups suppressed 1 hour
-# - Looked-up grids stored with source="lookup" and confidence="medium"
+# Features:
+# - UDP listener for JS8Call WSJT-X decode stream
+# - Event classifier (heartbeat, SNR, directed, group, hearing, etc.)
+# - SQLite storage: events, stations, connections, groups
+# - HamQTH + callook.info grid lookup with background worker
+# - Automatic DB pruning (configurable retention windows)
+# - FastAPI REST endpoints + serves browser UI at /
+# - CORS enabled for local network access
+#
+# Versioning: 0.phase.feature.patch — 1.0.0 = first stable release
 # ============================================================
 
 UDP_HOST = "127.0.0.1"
@@ -53,7 +49,13 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.3.3"
+BUILD_TAG = "js8-tracker-0.3.4"
+
+# Database pruning — old rows are deleted automatically in the background
+DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
+DB_PRUNE_CONNECTIONS_DAYS = 7   # prune connections not seen for this long
+DB_PRUNE_STATIONS_DAYS    = 30  # prune stations not heard for this long
+DB_PRUNE_INTERVAL_HOURS   = 1   # how often to run pruning
 
 # HamQTH — same credential file the old bridge used
 HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
@@ -233,6 +235,8 @@ class StatusResponse(BaseModel):
     hamqth_configured: bool
     my_call: str
     my_grid: Optional[str]
+    last_prune_at: Optional[str]
+    last_prune_deleted: int
 
 
 class EventResponse(BaseModel):
@@ -300,7 +304,7 @@ class GroupResponse(BaseModel):
 # App + shared state
 # ============================================================
 
-app = FastAPI(title="JS8-tracker Phase 2 Backend")
+app = FastAPI(title="JS8-tracker")
 
 app.add_middleware(
     CORSMiddleware,
@@ -331,6 +335,8 @@ STATUS: dict = {
     "lookup_queue_depth": 0,
     "my_call": "",
     "my_grid": None,
+    "last_prune_at": None,
+    "last_prune_deleted": 0,
 }
 
 
@@ -731,6 +737,75 @@ def init_db() -> None:
         con.commit()
     finally:
         con.close()
+
+
+# ============================================================
+# Database pruning
+# ============================================================
+
+def prune_db() -> int:
+    """Delete rows older than the configured retention windows.
+
+    Returns the total number of rows deleted across all tables.
+    """
+    now = datetime.now(timezone.utc)
+    event_cutoff      = (now - timedelta(days=DB_PRUNE_EVENTS_DAYS)).isoformat()
+    conn_cutoff       = (now - timedelta(days=DB_PRUNE_CONNECTIONS_DAYS)).isoformat()
+    station_cutoff    = (now - timedelta(days=DB_PRUNE_STATIONS_DAYS)).isoformat()
+
+    total_deleted = 0
+    con = sqlite3.connect(DB_PATH)
+    try:
+        cur = con.cursor()
+
+        cur.execute("DELETE FROM events WHERE timestamp < ?", (event_cutoff,))
+        total_deleted += cur.rowcount
+
+        cur.execute("DELETE FROM connections WHERE last_seen_at < ?", (conn_cutoff,))
+        total_deleted += cur.rowcount
+
+        cur.execute(
+            "DELETE FROM groups WHERE last_activity_at < ?",
+            (conn_cutoff,),
+        )
+        total_deleted += cur.rowcount
+
+        # Prune stations that haven't been heard recently (never prune own station)
+        cur.execute(
+            "DELETE FROM stations WHERE last_heard_at < ? AND is_local = 0",
+            (station_cutoff,),
+        )
+        total_deleted += cur.rowcount
+
+        # Cascade: remove grids for stations that no longer exist
+        cur.execute(
+            "DELETE FROM station_grids WHERE callsign NOT IN (SELECT callsign FROM stations)"
+        )
+        total_deleted += cur.rowcount
+
+        con.commit()
+    finally:
+        con.close()
+
+    return total_deleted
+
+
+def _prune_worker() -> None:
+    """Background thread: run prune_db() at startup and then every DB_PRUNE_INTERVAL_HOURS."""
+    # Brief delay so startup messages print first
+    time.sleep(5)
+    while True:
+        try:
+            deleted = prune_db()
+            ts = utc_now()
+            with STATUS_LOCK:
+                STATUS["last_prune_at"] = ts
+                STATUS["last_prune_deleted"] = deleted
+            if deleted:
+                print(f"[js8-tracker] prune: removed {deleted} old rows", flush=True)
+        except Exception as exc:
+            print(f"[js8-tracker] prune error: {exc}", flush=True)
+        time.sleep(DB_PRUNE_INTERVAL_HOURS * 3600)
 
 
 # ============================================================
@@ -1447,7 +1522,7 @@ def api_status() -> StatusResponse:
         snapshot = dict(STATUS)
     snapshot["lookup_queue_depth"] = _lookup_queue.qsize()
     return StatusResponse(
-        app_name="JS8-tracker Phase 2 Backend",
+        app_name="JS8-tracker",
         build_tag=BUILD_TAG,
         udp_host=UDP_HOST,
         udp_port=UDP_PORT,
@@ -1474,6 +1549,8 @@ def api_status() -> StatusResponse:
         hamqth_configured=(_hamqth_client is not None),
         my_call=snapshot["my_call"] or MYCALL,
         my_grid=snapshot["my_grid"],
+        last_prune_at=snapshot["last_prune_at"],
+        last_prune_deleted=snapshot["last_prune_deleted"],
     )
 
 
@@ -1933,6 +2010,9 @@ if __name__ == "__main__":
 
     lookup_thread = threading.Thread(target=_lookup_worker, daemon=True, name="lookup-worker")
     lookup_thread.start()
+
+    prune_thread = threading.Thread(target=_prune_worker, daemon=True, name="prune-worker")
+    prune_thread.start()
 
     # Register own station in DB and look up grid on startup
     with STATUS_LOCK:
