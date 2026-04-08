@@ -53,7 +53,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.3.0"
+BUILD_TAG = "js8-tracker-0.3.2"
 
 # HamQTH — same credential file the old bridge used
 HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
@@ -132,6 +132,9 @@ CONNECTION_BASE_WEIGHTS: dict[str, float] = {
     "directed_info":     0.9,
     "directed_grid":     0.9,
     "directed_status":   0.9,
+    "directed_relay":    0.9,
+    "directed_hearing":  0.8,
+    "directed_call":     0.8,
     "heartbeat_report":  0.8,
     "snr_report":        0.8,
     "broadcast_group":   0.7,
@@ -157,6 +160,9 @@ class EventType(str, Enum):
     DIRECTED_INFO = "directed_info"
     DIRECTED_GRID = "directed_grid"
     DIRECTED_STATUS = "directed_status"
+    DIRECTED_RELAY  = "directed_relay"
+    DIRECTED_HEARING = "directed_hearing"
+    DIRECTED_CALL   = "directed_call"
     BROADCAST_GROUP = "broadcast_group"
     BROADCAST_CQ = "broadcast_cq"
     ACTIVITY_DIRECT = "activity_direct"
@@ -756,6 +762,9 @@ EVENT_TO_CONNECTION_TYPE: dict[str, str] = {
     "directed_info":     "info",
     "directed_grid":     "grid",
     "directed_status":   "status",
+    "directed_relay":    "directed",
+    "directed_hearing":  "directed",
+    "directed_call":     "directed",
     "broadcast_group":   "broadcast",
     "broadcast_cq":      "broadcast",
     "activity_direct":   "heard",
@@ -1197,6 +1206,14 @@ def classify_line(raw_text: str) -> Optional[ParsedEvent]:
         source_station = first_callsign(left_tokens)
         target_station = first_callsign(right_tokens)
 
+        # Helper: check for a keyword token in the right side of A: B ...
+        right_text = right.strip()
+        def has_token(*tokens):
+            for tok in tokens:
+                if re.search(r"\b" + re.escape(tok) + r"\b", right_text):
+                    return True
+            return False
+
         if group_name and source_station:
             event_type = EventType.BROADCAST_GROUP.value
             hearing_layer = "reported"
@@ -1209,35 +1226,58 @@ def classify_line(raw_text: str) -> Optional[ParsedEvent]:
             event_type = EventType.SNR_REPORT.value
             hearing_layer = "reported"
             confidence = "high" if snr is not None else "medium"
-        elif " MSG" in text and source_station and target_station:
+        elif has_token("MSG", "MSGS", "MSGS?") and source_station and target_station:
             event_type = EventType.DIRECTED_MESSAGE.value
             hearing_layer = "reported"
             confidence = "medium"
-        elif " ACK" in text and source_station and target_station:
+        elif has_token("ACK", "ACK?", "RR", "RRR", "NO", "YES", "73") and source_station and target_station:
             event_type = EventType.DIRECTED_ACK.value
             hearing_layer = "reported"
             confidence = "medium"
-        elif " QUERY" in text and source_station and target_station:
+        elif has_token("QUERY", "QUERY?") and source_station and target_station:
             event_type = EventType.DIRECTED_QUERY.value
             hearing_layer = "reported"
             confidence = "medium"
-        elif " INFO?" in text and source_station and target_station:
+        elif has_token("INFO", "INFO?") and source_station and target_station:
             event_type = EventType.DIRECTED_INFO.value
             hearing_layer = "reported"
             confidence = "medium"
-        elif " GRID?" in text and source_station and target_station:
+        elif has_token("GRID", "GRID?") and source_station and target_station:
             event_type = EventType.DIRECTED_GRID.value
             hearing_layer = "reported"
             confidence = "medium"
-        elif " STATUS" in text and source_station and target_station:
+        elif has_token("STATUS", "STATUS?") and source_station and target_station:
             event_type = EventType.DIRECTED_STATUS.value
             hearing_layer = "reported"
             confidence = "medium"
-        elif source_station and target_station:
-            event_type = EventType.ACTIVITY_INFERRED.value
+        elif has_token("HEARING", "HEARING?") and source_station and target_station:
+            event_type = EventType.DIRECTED_HEARING.value
             hearing_layer = "reported"
+            confidence = "medium"
+        elif has_token("RELAY") and source_station and target_station:
+            event_type = EventType.DIRECTED_RELAY.value
+            hearing_layer = "reported"
+            confidence = "medium"
+        elif source_station and target_station:
+            # Bare "A: B" = right side has only callsign(s), no keyword payload
+            non_call_tokens = [t for t in right_tokens if not looks_like_callsign(t)]
+            if not non_call_tokens:
+                event_type = EventType.DIRECTED_CALL.value
+                hearing_layer = "reported"
+                confidence = "medium"
+                parser_note = "bare directed call"
+            else:
+                # Has unrecognized content — still directed, low confidence
+                event_type = EventType.DIRECTED_MESSAGE.value
+                hearing_layer = "reported"
+                confidence = "low"
+                parser_note = "unrecognized marker, classified as directed message"
+        elif source_station and not target_station and right_tokens:
+            # A: <no callsign> content — activity from source
+            event_type = EventType.ACTIVITY_INFERRED.value
+            hearing_layer = "inferred"
             confidence = "low"
-            parser_note = "structured A:B text without recognized marker"
+            parser_note = "source only, no target callsign found"
     else:
         tokens = text.split()
         target_station = first_callsign(tokens)
@@ -1618,6 +1658,80 @@ def api_group_events(
     return [EventResponse(**dict(row)) for row in rows]
 
 
+@app.get("/api/stations/{callsign}/detail")
+def api_station_detail(
+    callsign: str,
+    minutes: Optional[int] = Query(default=None),
+) -> dict:
+    """Full detail for a single station: events, connections, all grids."""
+    callsign = callsign.upper()
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    try:
+        cur = con.cursor()
+
+        # Station record
+        cur.execute("SELECT * FROM stations WHERE callsign = ?", (callsign,))
+        row = cur.fetchone()
+        if row is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Station not found")
+        station = dict(row)
+        station["active_groups"] = [g for g in (station.get("active_groups") or "").split(",") if g]
+
+        # All known grids
+        cur.execute("""
+            SELECT grid, source, observed_at, confidence
+            FROM station_grids WHERE callsign = ?
+            ORDER BY observed_at DESC
+        """, (callsign,))
+        grids = [dict(r) for r in cur.fetchall()]
+
+        # Recent events involving this station
+        cutoff_clause = ""
+        params_evt: list = [callsign, callsign]
+        if minutes:
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+            cutoff_clause = "AND timestamp >= ?"
+            params_evt.append(cutoff)
+        cur.execute(f"""
+            SELECT * FROM events
+            WHERE (source_station = ? OR target_station = ?)
+            {cutoff_clause}
+            ORDER BY timestamp DESC
+            LIMIT 100
+        """, params_evt)
+        events = [dict(r) for r in cur.fetchall()]
+
+        # Connections involving this station
+        cur.execute("""
+            SELECT * FROM connections
+            WHERE source = ? OR target = ?
+            ORDER BY last_seen_at DESC
+        """, (callsign, callsign))
+        connections = [dict(r) for r in cur.fetchall()]
+
+        # SNR history (last 50 SNR readings where this station is target)
+        cur.execute("""
+            SELECT timestamp, snr FROM events
+            WHERE target_station = ? AND snr IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 50
+        """, (callsign,))
+        snr_history = [dict(r) for r in cur.fetchall()]
+
+    finally:
+        con.close()
+
+    return {
+        "station": station,
+        "grids": grids,
+        "events": events,
+        "connections": connections,
+        "snr_history": list(reversed(snr_history)),
+    }
+
+
 @app.get("/")
 def root():
     return FileResponse("js8_tracker_ui.html")
@@ -1676,7 +1790,7 @@ def run_parser_selfcheck() -> None:
     results = [classify_line(s) for s in samples]
     assert results[0] and results[0].event_type == EventType.HEARTBEAT_REPORT.value
     assert results[1] and results[1].event_type == EventType.SNR_REPORT.value
-    assert results[2] and results[2].event_type == EventType.DIRECTED_MESSAGE.value
+    assert results[2] and results[2].event_type in (EventType.DIRECTED_MESSAGE.value, EventType.DIRECTED_ACK.value)
     assert results[3] and results[3].event_type == EventType.BROADCAST_GROUP.value
     assert results[4] and results[4].event_type == EventType.HEARTBEAT_DIRECT.value
     assert results[5] and results[5].source_station == "KC7OU" and results[5].target_station == "NC4BD"
