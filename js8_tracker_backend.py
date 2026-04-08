@@ -53,7 +53,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.2.7.1"
+BUILD_TAG = "js8-tracker-0.3.0"
 
 # HamQTH — same credential file the old bridge used
 HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
@@ -285,6 +285,7 @@ class GroupResponse(BaseModel):
     active_station_count: int
     event_count: int
     confidence: str
+    members: list[str]  # callsigns active in this group within window
 
 
 # ============================================================
@@ -1561,9 +1562,60 @@ def api_groups(
         else:
             cur.execute("SELECT * FROM groups ORDER BY last_activity_at DESC")
         rows = cur.fetchall()
+
+        # Fetch members for each group
+        result = []
+        member_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes or 90)).isoformat()
+        for row in rows:
+            d = dict(row)
+            cur.execute("""
+                SELECT DISTINCT source_station FROM events
+                WHERE group_name = ?
+                  AND source_station IS NOT NULL
+                  AND timestamp >= ?
+                ORDER BY timestamp DESC
+            """, (d["name"], member_cutoff))
+            members = [r[0] for r in cur.fetchall()]
+            result.append(GroupResponse(
+                name=d["name"],
+                last_activity_at=d["last_activity_at"],
+                active_station_count=d["active_station_count"],
+                event_count=d["event_count"],
+                confidence=d["confidence"],
+                members=members,
+            ))
     finally:
         con.close()
-    return [GroupResponse(**dict(row)) for row in rows]
+    return result
+
+
+@app.get("/api/groups/{name}/events", response_model=list[EventResponse])
+def api_group_events(
+    name: str,
+    limit: int = Query(default=50, ge=1, le=500),
+    minutes: Optional[int] = Query(default=None),
+) -> list[EventResponse]:
+    """Recent events for a specific group."""
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    try:
+        cur = con.cursor()
+        clauses = ["group_name = ?"]
+        params: list = [name]
+        if minutes:
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+            clauses.append("timestamp >= ?")
+            params.append(cutoff)
+        where = "WHERE " + " AND ".join(clauses)
+        params.append(limit)
+        cur.execute(
+            f"SELECT * FROM events {where} ORDER BY timestamp DESC LIMIT ?",
+            params,
+        )
+        rows = cur.fetchall()
+    finally:
+        con.close()
+    return [EventResponse(**dict(row)) for row in rows]
 
 
 @app.get("/")

@@ -460,7 +460,55 @@ html, body {
   transition: all 0.15s;
 }
 .group-pill:hover { border-color: var(--cyan); }
+.group-pill-active { background: #003040 !important; border-color: var(--cyan) !important; color: var(--cyan) !important; box-shadow: 0 0 6px var(--cyan); }
 .group-pill .gcnt { color: var(--text-mute); margin-left: 3px; font-size: 9px; }
+
+/* ── GROUP DETAIL CARD ───────────────────────────────── */
+#group-detail {
+  display: none;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--cyan);
+  background: #001a20;
+  flex-shrink: 0;
+}
+#group-detail.visible { display: block; }
+.group-detail-name {
+  font-size: 15px;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.group-detail-close {
+  font-size: 11px;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding: 2px 6px;
+  border: 1px solid var(--border2);
+  border-radius: 2px;
+}
+.group-detail-close:hover { color: var(--cyan); border-color: var(--cyan); }
+.group-detail-meta { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+.group-member-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.group-member-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--cyan);
+  border-radius: 2px;
+  color: var(--cyan);
+  background: #002030;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.group-member-chip:hover { background: var(--cyan); color: #000; }
 
 /* ── EMPTY STATES ──────────────────────────────────── */
 .empty-state {
@@ -609,6 +657,11 @@ html, body {
       <div class="mystation-meta" id="my-meta">local station</div>
     </div>
     <div id="group-strip"></div>
+    <div id="group-detail">
+      <div class="group-detail-name"><span id="gd-name">—</span><span class="group-detail-close" onclick="selectGroup(null)">✕ close</span></div>
+      <div class="group-detail-meta" id="gd-meta"></div>
+      <div class="group-member-list" id="gd-members"></div>
+    </div>
     <div class="panel-body" id="station-list">
       <div class="empty-state">Waiting for stations…</div>
     </div>
@@ -664,6 +717,8 @@ const pendingStart  = {};   // callsign -> Date.now() when first seen as pending
 let connections     = [];
 let selectedCall    = null;
 let selectedEvent   = null;  // {src, dst} of clicked event row
+let selectedGroup   = null;  // group name string
+let _groups         = [];    // current groups from API
 let blinkingCalls   = new Set();  // calls currently mid-blink
 let rxFlash         = false;
 
@@ -988,15 +1043,83 @@ function selectStation(call) {
 // ── GROUPS ────────────────────────────────────────────────
 async function fetchGroups() {
   try {
-    const r = await fetch(`${API}/api/groups`);
+    let url = `${API}/api/groups`;
+    if (activeWindowMin > 0) url += `?minutes=${activeWindowMin}`;
+    const r = await fetch(url);
     if (!r.ok) return;
-    const groups = await r.json();
-    const strip = document.getElementById('group-strip');
-    if (groups.length === 0) { strip.innerHTML = ''; return; }
-    strip.innerHTML = groups.map(g =>
-      `<div class="group-pill" title="${g.event_count} events">${g.name}<span class="gcnt">${g.active_station_count}</span></div>`
-    ).join('');
+    _groups = await r.json();
+    renderGroups();
   } catch(e) {}
+}
+
+function renderGroups() {
+  const strip = document.getElementById('group-strip');
+  if (_groups.length === 0) { strip.innerHTML = ''; return; }
+  strip.innerHTML = _groups.map(g => {
+    const isSelected = selectedGroup === g.name;
+    return `<div class="group-pill ${isSelected ? 'group-pill-active' : ''}"
+      onclick="selectGroup('${g.name}')"
+      title="${g.event_count} events · ${g.members.length} members">
+      ${g.name}<span class="gcnt">${g.active_station_count}</span>
+    </div>`;
+  }).join('');
+
+  // Update detail card if a group is selected
+  if (selectedGroup) {
+    const g = _groups.find(x => x.name === selectedGroup);
+    if (g) renderGroupDetail(g);
+  }
+}
+
+function renderGroupDetail(g) {
+  const card = document.getElementById('group-detail');
+  card.classList.add('visible');
+  document.getElementById('gd-name').textContent = g.name;
+  document.getElementById('gd-meta').textContent =
+    `${g.members.length} active · ${g.event_count} events · last: ${fmtAge(g.last_activity_at)}`;
+  document.getElementById('gd-members').innerHTML = g.members.map(call =>
+    `<span class="group-member-chip" onclick="selectStation('${call}')">${call}</span>`
+  ).join('');
+}
+
+function selectGroup(name) {
+  if (selectedGroup === name || name === null) {
+    selectedGroup = null;
+    document.getElementById('group-detail').classList.remove('visible');
+    document.getElementById('group-strip').querySelectorAll('.group-pill').forEach(p => p.classList.remove('group-pill-active'));
+    renderStations();
+    renderMap();
+    return;
+  }
+
+  selectedGroup = name;
+  selectedCall  = null;
+  selectedEvent = null;
+
+  const g = _groups.find(x => x.name === name);
+  if (g) {
+    renderGroupDetail(g);
+
+    // Fly map to fit all member stations
+    const points = [];
+    if (_myCall && _myGrid) {
+      const ll = gridToLatLon(_myGrid);
+      if (ll) points.push(ll);
+    }
+    g.members.forEach(call => {
+      const s = _allStations.find(x => x.callsign === call);
+      if (s && s.best_grid) {
+        const ll = gridToLatLon(s.best_grid);
+        if (ll) points.push(ll);
+      }
+    });
+    if (points.length === 1) map.flyTo(points[0], 7, { duration: 0.9 });
+    else if (points.length > 1) map.flyToBounds(L.latLngBounds(points), { padding: [50, 50], maxZoom: 8, duration: 0.9 });
+  }
+
+  renderGroups();
+  renderStations();
+  renderMap();
 }
 
 // ── MAP ───────────────────────────────────────────────────
@@ -1035,12 +1158,14 @@ function renderMap() {
     const size     = isSelected ? 14 : 10;
     const opacity  = age === 'stale' ? 0.4 : 1.0;
 
-    const isBlink  = blinkingCalls.has(s.callsign);
-    const isEventSel = selectedEvent && (s.callsign === selectedEvent.src || s.callsign === selectedEvent.dst);
-    const dotSize  = (isSelected || isEventSel) ? 14 : 10;
-    const dotBorder = (isSelected || isEventSel) ? '2px solid #fff' : '1px solid rgba(0,0,0,0.5)';
-    const dotGlow   = (isSelected || isEventSel) ? 8 : 4;
+    const isBlink     = blinkingCalls.has(s.callsign);
+    const isGroupMember = selectedGroup && (_groups.find(g => g.name === selectedGroup)?.members || []).includes(s.callsign);
+    const isEventSel  = selectedEvent && (s.callsign === selectedEvent.src || s.callsign === selectedEvent.dst);
+    const dotSize  = (isSelected || isEventSel || isGroupMember) ? 13 : 10;
+    const dotBorder = (isSelected || isEventSel) ? '2px solid #fff' : isGroupMember ? `2px solid var(--cyan)` : '1px solid rgba(0,0,0,0.5)';
+    const dotGlow   = (isSelected || isEventSel) ? 8 : isGroupMember ? 6 : 4;
 
+    const dimmed = selectedGroup && !isGroupMember;
     const icon = L.divIcon({
       className: isBlink ? 'blink-marker' : '',
       html: `<div style="
@@ -1048,7 +1173,7 @@ function renderMap() {
         background:${color};
         border:${dotBorder};
         border-radius:50%;
-        opacity:${opacity};
+        opacity:${dimmed ? opacity * 0.25 : opacity};
         box-shadow:0 0 ${dotGlow}px ${color};
         cursor:pointer;
       "></div>`,
