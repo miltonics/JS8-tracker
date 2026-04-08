@@ -2047,4 +2047,10 @@ if __name__ == "__main__":
     listener_thread = threading.Thread(target=udp_listener, daemon=True)
     listener_thread.start()
 
-    uvicorn.run(app, host=HTTP_HOST, port=HTTP_PORT, timeout_graceful_shutdown=1)
+    # Create HTTP socket with SO_REUSEADDR so the port is freed immediately on exit
+    import socket as _socket
+    http_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    http_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    http_sock.bind((HTTP_HOST, HTTP_PORT))
+    http_sock.set_inheritable(True)
+    uvicorn.run(app, fd=http_sock.fileno(), timeout_graceful_shutdown=1)
