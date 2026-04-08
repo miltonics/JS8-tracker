@@ -1150,17 +1150,25 @@ function renderStations() {
 }
 
 function selectEvent(src, dst) {
-  // Toggle off if same event clicked again
+  // Toggle off if same event clicked again — restore map view
   if (selectedEvent && selectedEvent.src === src && selectedEvent.dst === dst) {
     selectedEvent = null;
     blinkingCalls.clear();
+    if (_savedMapView) {
+      map.flyTo(_savedMapView.center, _savedMapView.zoom, { duration: 0.8 });
+      _savedMapView = null;
+    }
     renderStations();
     renderMap();
     return;
   }
 
+  // Save map view before flying
+  _savedMapView = { center: map.getCenter(), zoom: map.getZoom() };
+
   selectedEvent = { src, dst };
-  selectedCall  = null;  // clear station selection
+  selectedCall  = null;
+  closeStationDetail();
 
   // Trigger blink
   blinkingCalls = new Set([src, dst].filter(Boolean));
@@ -1190,13 +1198,22 @@ function selectEvent(src, dst) {
 
 function selectStation(call) {
   if (selectedCall === call) {
-    // Second click — deselect and close panel
+    // Second click — deselect, close panel, restore map view
     selectedCall = null;
     closeStationDetail();
+    if (_savedMapView) {
+      map.flyTo(_savedMapView.center, _savedMapView.zoom, { duration: 0.8 });
+      _savedMapView = null;
+    }
     return;
   }
-  selectedCall = call;
+
+  // Save map view before flying
+  _savedMapView = { center: map.getCenter(), zoom: map.getZoom() };
+
+  selectedCall  = call;
   selectedGroup = null;
+  selectedEvent = null;
   document.getElementById('group-detail').classList.remove('visible');
   renderStations();
   renderMap();
@@ -1644,6 +1661,10 @@ function closeStationDetail() {
   _detailCall = null;
   document.getElementById('station-detail').classList.remove('visible');
   selectedCall = null;
+  if (_savedMapView) {
+    map.flyTo(_savedMapView.center, _savedMapView.zoom, { duration: 0.8 });
+    _savedMapView = null;
+  }
   renderStations();
   renderMap();
 }
