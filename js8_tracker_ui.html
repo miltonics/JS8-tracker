@@ -112,6 +112,18 @@ html, body {
 .pill.layer-direct.active   { background: #003820; border-color: var(--green); color: var(--green); }
 .pill.layer-reported.active { background: #2a1800; border-color: var(--amber); color: var(--amber); }
 .pill.layer-inferred.active { background: #1a1030; border-color: #8060c0; color: #8060c0; }
+.pill.band-active { background: #1a2800 !important; border-color: #80c020 !important; color: #80c020 !important; }
+.band-badge {
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: #1a2800;
+  color: #80c020;
+  border: 1px solid #2a4000;
+  margin-left: 4px;
+  vertical-align: middle;
+  font-family: var(--mono);
+}
 
 #rx-indicator {
   width: 8px; height: 8px;
@@ -784,6 +796,13 @@ html, body {
     </label>
   </div>
 
+  <!-- Band filter -->
+  <div style="display:flex;gap:4px;align-items:center;">
+    <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:4px;">Band</span>
+    <div class="pill band-active" id="band-auto" onclick="setBand('auto')" title="Follow current frequency">Auto</div>
+    <div id="band-pills" style="display:flex;gap:4px;"></div>
+  </div>
+
   <div id="header-right">
     <div id="decay-legend">
       <div class="decay-item"><div class="decay-dot" style="background:var(--green)"></div><span>Current</span></div>
@@ -876,6 +895,8 @@ let connections     = [];
 let selectedCall    = null;
 let selectedEvent   = null;  // {src, dst} of clicked event row
 let selectedGroup   = null;  // group name string
+let activeBand      = 'auto'; // 'auto', null (all), or band string like '40m'
+let _knownBands     = new Set();
 let _groups         = [];    // current groups from API
 let blinkingCalls   = new Set();  // calls currently mid-blink
 let rxFlash         = false;
@@ -992,6 +1013,50 @@ function fmtEventType(etype) {
   return map[etype] || etype;
 }
 
+// ── BAND FILTER ──────────────────────────────────────────
+function setBand(band) {
+  activeBand = band;
+  // Update pill styles
+  document.getElementById('band-auto').classList.toggle('band-active', band === 'auto');
+  document.querySelectorAll('.band-pill').forEach(p => {
+    p.classList.toggle('band-active', p.dataset.band === band);
+  });
+  fetchStations();
+  fetchEvents();
+  fetchConnections();
+  fetchGroups();
+}
+
+function updateBandPills(bands) {
+  const strip = document.getElementById('band-pills');
+  // Add any new bands
+  bands.forEach(b => {
+    if (!_knownBands.has(b)) {
+      _knownBands.add(b);
+      const pill = document.createElement('div');
+      pill.className = 'pill band-pill';
+      pill.dataset.band = b;
+      pill.textContent = b;
+      pill.title = `Show only ${b} stations`;
+      pill.onclick = () => setBand(b);
+      strip.appendChild(pill);
+    }
+  });
+  // Update active state
+  document.querySelectorAll('.band-pill').forEach(p => {
+    p.classList.toggle('band-active', p.dataset.band === activeBand);
+  });
+}
+
+function getActiveBandParam() {
+  if (activeBand === 'auto') return _currentBand || null;
+  if (activeBand === null) return null;
+  return activeBand;
+}
+
+let _currentBand = null;
+let _currentDialFreq = null;
+
 // ── TOGGLE CONTROLS ───────────────────────────────────────
 function toggleLayer(el) {
   const layer = el.dataset.layer;
@@ -1082,11 +1147,16 @@ async function fetchStations() {
     let url = `${API}/api/stations`;
     const params = [];
     if (activeWindowMin > 0) params.push(`minutes=${activeWindowMin}`);
+    const bandParam = getActiveBandParam();
+    if (bandParam) params.push(`band=${encodeURIComponent(bandParam)}`);
     if (params.length) url += '?' + params.join('&');
     const r = await fetch(url);
     if (!r.ok) return;
     _allStations = await r.json();
     document.getElementById('s-stations').textContent = _allStations.length;
+    // Collect known bands from station data
+    const bands = [...new Set(_allStations.filter(s => s.last_band).map(s => s.last_band))].sort();
+    if (bands.length) updateBandPills(bands);
     renderStations();
     renderMap();
   } catch(e) {}
@@ -1131,7 +1201,7 @@ function renderStations() {
       <div>
         <div>
           <span class="conf-dot conf-${s.confidence}"></span>
-          <span class="station-call layer-${s.hearing_layer}">${s.callsign}</span>
+          <span class="station-call layer-${s.hearing_layer}">${s.callsign}</span>${s.last_band ? `<span class="band-badge">${s.last_band}</span>` : ''}
         </div>
         <div class="station-meta">
           ${s.best_grid
@@ -1480,8 +1550,10 @@ function renderMap() {
 // ── CONNECTIONS ───────────────────────────────────────────
 async function fetchConnections() {
   try {
+    const bandParam2 = getActiveBandParam();
     let url = `${API}/api/connections?min_weight=0.3`;
     if (activeWindowMin > 0) url += `&minutes=${activeWindowMin}`;
+    if (bandParam2) url += `&band=${encodeURIComponent(bandParam2)}`;
     const r = await fetch(url);
     if (!r.ok) return;
     connections = await r.json();
@@ -1521,7 +1593,9 @@ let _allEvents = [];
 
 async function fetchEvents() {
   try {
-    const url = `${API}/api/events?limit=100`;
+    const bandParam = getActiveBandParam();
+    const bandQ = bandParam ? `&band=${encodeURIComponent(bandParam)}` : '';
+    const url = `${API}/api/events?limit=100${bandQ}`;
     const r = await fetch(url);
     if (!r.ok) return;
     const evts = await r.json();

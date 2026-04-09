@@ -49,7 +49,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.4.1"
+BUILD_TAG = "js8-tracker-0.4.2"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
@@ -60,6 +60,31 @@ DB_PRUNE_INTERVAL_HOURS   = 1   # how often to run pruning
 # JS8Call UDP JSON API (port 2239) — richer data, no fragmentation, includes grids
 JS8CALL_API_HOST = "127.0.0.1"
 JS8CALL_API_PORT = 2239
+
+# Band mapping — dial frequency (Hz) → band name
+# Matches within ±100 kHz of the center frequency
+JS8_BAND_MAP = [
+    (1_840_000,  "160m"),
+    (3_578_000,  "80m"),
+    (7_078_000,  "40m"),
+    (10_130_000, "30m"),
+    (14_078_000, "20m"),
+    (18_104_000, "17m"),
+    (21_078_000, "15m"),
+    (24_922_000, "12m"),
+    (28_078_000, "10m"),
+    (50_318_000, "6m"),
+]
+
+def freq_to_band(freq_hz: Optional[int]) -> Optional[str]:
+    """Map a dial frequency in Hz to a band name."""
+    if not freq_hz:
+        return None
+    for center, band in JS8_BAND_MAP:
+        if abs(freq_hz - center) <= 100_000:
+            return band
+    return f"{freq_hz // 1_000_000}m"  # fallback: raw MHz
+
 
 # Fragment reassembly — JS8Call splits long messages at ~12 char boundaries
 FRAG_TIMEOUT_SECS  = 2.0   # flush buffer if no new fragment arrives within this window
@@ -202,6 +227,8 @@ class ParsedEvent:
     confidence: Confidence
     grid_in_text: Optional[str]
     parser_note: Optional[str]
+    dial_freq_hz: Optional[int] = None
+    band: Optional[str] = None
 
 
 @dataclass
@@ -248,6 +275,8 @@ class StatusResponse(BaseModel):
     last_prune_deleted: int
     js8call_api_connected: bool
     js8call_api_packets: int
+    current_band: Optional[str]
+    current_dial_freq_hz: Optional[int]
 
 
 class EventResponse(BaseModel):
@@ -350,6 +379,8 @@ STATUS: dict = {
     "last_prune_deleted": 0,
     "js8call_api_connected": False,
     "js8call_api_packets": 0,
+    "current_band": None,
+    "current_dial_freq_hz": None,
 }
 
 
@@ -671,10 +702,19 @@ def init_db() -> None:
                 hearing_layer TEXT NOT NULL,
                 confidence TEXT NOT NULL,
                 grid_in_text TEXT,
-                parser_note TEXT
+                parser_note TEXT,
+                dial_freq_hz INTEGER,
+                band TEXT
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_events_band ON events(band)")
+        # Migration for existing DBs
+        for col in [("dial_freq_hz", "INTEGER"), ("band", "TEXT")]:
+            try:
+                cur.execute(f"ALTER TABLE events ADD COLUMN {col[0]} {col[1]}")
+            except Exception:
+                pass
 
         # ---- Phase 2: stations ----
         cur.execute("""
@@ -691,7 +731,9 @@ def init_db() -> None:
                 event_count INTEGER NOT NULL DEFAULT 0,
                 active_groups TEXT NOT NULL DEFAULT '',
                 is_local INTEGER NOT NULL DEFAULT 0,
-                grid_status TEXT NOT NULL DEFAULT 'pending'
+                grid_status TEXT NOT NULL DEFAULT 'pending',
+                last_band TEXT,
+                last_dial_freq_hz INTEGER
             )
         """)
         # Migration: add grid_status if upgrading from older schema
@@ -699,6 +741,11 @@ def init_db() -> None:
             cur.execute("ALTER TABLE stations ADD COLUMN grid_status TEXT NOT NULL DEFAULT 'pending'")
         except Exception:
             pass  # column already exists
+        for col in [("last_band", "TEXT"), ("last_dial_freq_hz", "INTEGER")]:
+            try:
+                cur.execute(f"ALTER TABLE stations ADD COLUMN {col[0]} {col[1]}")
+            except Exception:
+                pass
 
         # ---- Phase 2: station_grids ----
         cur.execute("""
@@ -892,8 +939,9 @@ def upsert_station(con: sqlite3.Connection, callsign: str, event: ParsedEvent, r
             INSERT INTO stations
                 (callsign, best_grid, best_grid_source, last_heard_at,
                  last_snr, snr_min, snr_max, hearing_layer, confidence,
-                 event_count, active_groups, is_local, grid_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?)
+                 event_count, active_groups, is_local, grid_status,
+                 last_band, last_dial_freq_hz)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?)
         """, (
             callsign,
             event.grid_in_text,
@@ -904,6 +952,7 @@ def upsert_station(con: sqlite3.Connection, callsign: str, event: ParsedEvent, r
             event.confidence,
             active_groups,
             initial_grid_status,
+            event.band, event.dial_freq_hz,
         ))
     else:
         # Existing station — selective update
@@ -964,12 +1013,15 @@ def upsert_station(con: sqlite3.Connection, callsign: str, event: ParsedEvent, r
                 confidence = ?,
                 event_count = event_count + 1,
                 active_groups = ?,
-                grid_status = ?
+                grid_status = ?,
+                last_band = COALESCE(?, last_band),
+                last_dial_freq_hz = COALESCE(?, last_dial_freq_hz)
             WHERE callsign = ?
         """, (
             new_best_grid, new_best_grid_source, now,
             new_last_snr, new_snr_min, new_snr_max,
-            new_layer, new_conf, new_groups, new_grid_status, callsign,
+            new_layer, new_conf, new_groups, new_grid_status,
+            event.band, event.dial_freq_hz, callsign,
         ))
 
     # Always record the grid in station_grids if present
@@ -1082,13 +1134,15 @@ def store_event(event: ParsedEvent) -> None:
         cur.execute("""
             INSERT INTO events (
                 id, timestamp, raw_text, event_type, source_station, target_station,
-                group_name, snr, hearing_layer, confidence, grid_in_text, parser_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                group_name, snr, hearing_layer, confidence, grid_in_text, parser_note,
+                dial_freq_hz, band
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             event.id, event.timestamp, event.raw_text, event.event_type,
             event.source_station, event.target_station, event.group_name,
             event.snr, event.hearing_layer, event.confidence,
             event.grid_in_text, event.parser_note,
+            event.dial_freq_hz, event.band,
         ))
 
         # Phase 2: upsert station records
@@ -1657,6 +1711,11 @@ def _handle_js8call_api_packet(data: dict) -> None:
         event = classify_line(completed)
         if event is None:
             return
+        # Attach frequency data from this packet
+        dial = params.get("DIAL")
+        if dial:
+            event.dial_freq_hz = dial
+            event.band = freq_to_band(dial)
         # Avoid double-storing events we already got from port 2237
         # Use a short dedup cache keyed on (source, target, type, minute)
         dedup_key = (
@@ -1674,11 +1733,17 @@ def _handle_js8call_api_packet(data: dict) -> None:
         print(f"[js8-tracker] api {ptype}: {format_cli_event(event)}", flush=True)
 
     elif ptype == "STATION.STATUS":
-        # Track selected station — when PTT goes on, we're transmitting to SELECTED
+        # Track selected station and current frequency
         selected = params.get("SELECTED", "").strip()
+        dial = params.get("DIAL")
         if selected:
             with STATUS_LOCK:
                 STATUS["_selected_station"] = selected
+        if dial:
+            band = freq_to_band(dial)
+            with STATUS_LOCK:
+                STATUS["current_dial_freq_hz"] = dial
+                STATUS["current_band"] = band
 
     elif ptype == "RIG.PTT":
         ptt_on = params.get("PTT", False)
@@ -1823,6 +1888,8 @@ def api_status() -> StatusResponse:
         last_prune_deleted=snapshot["last_prune_deleted"],
         js8call_api_connected=snapshot["js8call_api_connected"],
         js8call_api_packets=snapshot["js8call_api_packets"],
+        current_band=snapshot["current_band"],
+        current_dial_freq_hz=snapshot["current_dial_freq_hz"],
     )
 
 
@@ -1832,6 +1899,7 @@ def api_events(
     confidence: Optional[str] = Query(default=None),
     minutes: Optional[int] = Query(default=None),
     types: Optional[str] = Query(default=None),
+    band: Optional[str] = Query(default=None),
 ) -> list[EventResponse]:
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
@@ -1857,6 +1925,10 @@ def api_events(
             clauses.append(f"event_type IN ({placeholders})")
             params.extend(allowed_types)
 
+        if band:
+            clauses.append("(band = ? OR band IS NULL)")
+            params.append(band)
+
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(limit)
         cur.execute(f"SELECT * FROM events {where} ORDER BY timestamp DESC LIMIT ?", params)
@@ -1876,6 +1948,7 @@ def api_stations(
     hearing: Optional[str] = Query(default=None),
     active_only: bool = Query(default=False),
     minutes: Optional[int] = Query(default=None),
+    band: Optional[str] = Query(default=None),
 ) -> list[StationResponse]:
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
@@ -1902,6 +1975,10 @@ def api_stations(
             clauses.append("last_heard_at >= ?")
             params.append(cutoff)
 
+        if band:
+            clauses.append("(last_band = ? OR last_band IS NULL)")
+            params.append(band)
+
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         cur.execute(f"SELECT * FROM stations {where} ORDER BY last_heard_at DESC", params)
         rows = cur.fetchall()
@@ -1926,6 +2003,8 @@ def api_stations(
             active_groups=active_groups,
             is_local=bool(d["is_local"]),
             grid_status=d.get("grid_status") or "pending",
+            last_band=d.get("last_band"),
+            last_dial_freq_hz=d.get("last_dial_freq_hz"),
         ))
     return result
 
