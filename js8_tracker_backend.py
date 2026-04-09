@@ -708,13 +708,16 @@ def init_db() -> None:
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_events_band ON events(band)")
-        # Migration for existing DBs
+        # Migration for existing DBs — must run before creating index on band
         for col in [("dial_freq_hz", "INTEGER"), ("band", "TEXT")]:
             try:
                 cur.execute(f"ALTER TABLE events ADD COLUMN {col[0]} {col[1]}")
             except Exception:
                 pass
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_events_band ON events(band)")
+        except Exception:
+            pass
 
         # ---- Phase 2: stations ----
         cur.execute("""
