@@ -49,7 +49,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.4.0"
+BUILD_TAG = "js8-tracker-0.4.1"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
@@ -57,9 +57,14 @@ DB_PRUNE_CONNECTIONS_DAYS = 7   # prune connections not seen for this long
 DB_PRUNE_STATIONS_DAYS    = 30  # prune stations not heard for this long
 DB_PRUNE_INTERVAL_HOURS   = 1   # how often to run pruning
 
+# JS8Call UDP JSON API (port 2239) — richer data, no fragmentation, includes grids
+JS8CALL_API_HOST = "127.0.0.1"
+JS8CALL_API_PORT = 2239
+
 # Fragment reassembly — JS8Call splits long messages at ~12 char boundaries
 FRAG_TIMEOUT_SECS  = 2.0   # flush buffer if no new fragment arrives within this window
 FRAG_MAX_LEN       = 500   # safety cap on reassembled message length
+
 
 # HamQTH — same credential file the old bridge used
 HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
@@ -241,6 +246,8 @@ class StatusResponse(BaseModel):
     my_grid: Optional[str]
     last_prune_at: Optional[str]
     last_prune_deleted: int
+    js8call_api_connected: bool
+    js8call_api_packets: int
 
 
 class EventResponse(BaseModel):
@@ -341,6 +348,8 @@ STATUS: dict = {
     "my_grid": None,
     "last_prune_at": None,
     "last_prune_deleted": 0,
+    "js8call_api_connected": False,
+    "js8call_api_packets": 0,
 }
 
 
@@ -1489,6 +1498,7 @@ def maybe_forward_udp(packet: bytes) -> None:
 # ============================================================
 
 # ============================================================
+
 # Fragment reassembly
 # ============================================================
 
@@ -1570,6 +1580,163 @@ class FragmentBuffer:
 
 
 _frag_buffer = FragmentBuffer()
+
+
+# ============================================================
+# JS8Call UDP JSON API listener (port 2239)
+# ============================================================
+
+def _apply_spot_grid(callsign: str, grid: str) -> None:
+    """Apply a grid from RX.SPOT directly — highest confidence, transmitted source."""
+    grid = grid.strip().upper()
+    if not grid or not GRID_RE.match(grid):
+        return
+    now = utc_now()
+    con = sqlite3.connect(DB_PATH)
+    try:
+        cur = con.cursor()
+        cur.execute("SELECT best_grid, best_grid_source FROM stations WHERE callsign = ?", (callsign,))
+        row = cur.fetchone()
+        if row is None:
+            return  # station not yet in DB — will be added when event arrives
+        current_grid, current_source = row
+        current_source = current_source or "unknown"
+        # Transmitted grid always wins
+        cur.execute("""
+            UPDATE stations
+            SET best_grid = ?, best_grid_source = 'transmitted', grid_status = 'found'
+            WHERE callsign = ?
+        """, (grid, callsign))
+        cur.execute("""
+            INSERT INTO station_grids (callsign, grid, source, observed_at, confidence)
+            VALUES (?, ?, 'transmitted', ?, 'high')
+            ON CONFLICT(callsign, grid, source) DO UPDATE SET observed_at = excluded.observed_at
+        """, (callsign, grid, now))
+        con.commit()
+        # Also cache so lookup worker skips it
+        _grid_cache.put(callsign, grid)
+    finally:
+        con.close()
+
+
+def _handle_js8call_api_packet(data: dict) -> None:
+    """Process one parsed JSON packet from the JS8Call UDP API."""
+    ptype = data.get("type", "")
+    params = data.get("params", {})
+    value = data.get("value", "")
+
+    if ptype == "RX.SPOT":
+        # Free grid data — apply immediately
+        call = params.get("CALL", "").strip().upper()
+        grid = params.get("GRID", "").strip()
+        if call and grid:
+            _apply_spot_grid(call, grid)
+            _grid_cache.put(call, grid.upper())
+
+    elif ptype in ("RX.DIRECTED", "RX.ACTIVITY"):
+        # Use the value field — it's the full reassembled message text
+        # Strip the JS8Call ♢ suffix and trailing whitespace
+        text = value.replace("♢", "").strip()
+        if not text:
+            return
+
+        # For RX.DIRECTED we also have pre-parsed FROM/TO/GRID
+        if ptype == "RX.DIRECTED":
+            from_call = params.get("FROM", "").strip().upper()
+            grid = params.get("GRID", "").strip()
+            snr = params.get("SNR")
+            if from_call and grid:
+                _apply_spot_grid(from_call, grid)
+
+        # Push through existing fragment buffer and classifier
+        # RX.DIRECTED is already reassembled by JS8Call, so push directly
+        completed = _frag_buffer.push(text) if ptype == "RX.ACTIVITY" else text
+        if completed is None:
+            return
+
+        event = classify_line(completed)
+        if event is None:
+            return
+        # Avoid double-storing events we already got from port 2237
+        # Use a short dedup cache keyed on (source, target, type, minute)
+        dedup_key = (
+            event.source_station, event.target_station,
+            event.event_type,
+            event.timestamp[:16]  # minute-level dedup
+        )
+        if dedup_key in _api_dedup_cache:
+            return
+        _api_dedup_cache.add(dedup_key)
+        if len(_api_dedup_cache) > 2000:
+            _api_dedup_cache.clear()
+
+        store_event(event)
+        print(f"[js8-tracker] api {ptype}: {format_cli_event(event)}", flush=True)
+
+    elif ptype == "STATION.STATUS":
+        # Track selected station — when PTT goes on, we're transmitting to SELECTED
+        selected = params.get("SELECTED", "").strip()
+        if selected:
+            with STATUS_LOCK:
+                STATUS["_selected_station"] = selected
+
+    elif ptype == "RIG.PTT":
+        ptt_on = params.get("PTT", False)
+        if ptt_on:
+            with STATUS_LOCK:
+                selected = STATUS.get("_selected_station", "")
+            if selected and selected != MYCALL:
+                # We're transmitting to `selected` — create outbound connection
+                now = utc_now()
+                synthetic = ParsedEvent(
+                    id=str(uuid.uuid4()),
+                    timestamp=now,
+                    raw_text=f"{MYCALL}: {selected} TX",
+                    event_type=EventType.DIRECTED_CALL.value,
+                    source_station=MYCALL,
+                    target_station=selected if not selected.startswith("@") else None,
+                    group_name=selected if selected.startswith("@") else None,
+                    snr=None,
+                    hearing_layer="direct",
+                    confidence="medium",
+                    grid_in_text=None,
+                    parser_note="outbound TX via JS8Call API",
+                )
+                store_event(synthetic)
+                print(f"[js8-tracker] TX -> {selected}", flush=True)
+
+
+# Dedup cache for API events (avoid double-storing from both ports)
+_api_dedup_cache: set = set()
+
+
+def js8call_api_listener() -> None:
+    """Listen on JS8Call UDP JSON API (port 2239)."""
+    import socket as _socket
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((JS8CALL_API_HOST, JS8CALL_API_PORT))
+        print(f"[js8-tracker] JS8Call API listening on {JS8CALL_API_HOST}:{JS8CALL_API_PORT}", flush=True)
+        with STATUS_LOCK:
+            STATUS["js8call_api_connected"] = True
+    except OSError as e:
+        print(f"[js8-tracker] WARNING: could not bind JS8Call API port {JS8CALL_API_PORT}: {e}", flush=True)
+        print(f"[js8-tracker]   Grid lookups and TX detection disabled from API.", flush=True)
+        return
+
+    while True:
+        try:
+            data, _ = sock.recvfrom(65535)
+            with STATUS_LOCK:
+                STATUS["js8call_api_packets"] += 1
+            try:
+                packet = json.loads(data.decode("utf-8"))
+                _handle_js8call_api_packet(packet)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+        except Exception as exc:
+            print(f"[js8-tracker] JS8Call API error: {exc}", flush=True)
 
 
 def udp_listener() -> None:
@@ -1654,6 +1821,8 @@ def api_status() -> StatusResponse:
         my_grid=snapshot["my_grid"],
         last_prune_at=snapshot["last_prune_at"],
         last_prune_deleted=snapshot["last_prune_deleted"],
+        js8call_api_connected=snapshot["js8call_api_connected"],
+        js8call_api_packets=snapshot["js8call_api_packets"],
     )
 
 
@@ -2162,6 +2331,9 @@ if __name__ == "__main__":
     print(f"[js8-tracker] build tag: {BUILD_TAG}", flush=True)
     print(f"[js8-tracker] starting HTTP on {HTTP_HOST}:{HTTP_PORT}", flush=True)
     print(f"[js8-tracker] UDP forward enabled: {FORWARD_UDP_ENABLED}", flush=True)
+
+    api_thread = threading.Thread(target=js8call_api_listener, daemon=True, name="js8call-api")
+    api_thread.start()
 
     listener_thread = threading.Thread(target=udp_listener, daemon=True)
     listener_thread.start()
