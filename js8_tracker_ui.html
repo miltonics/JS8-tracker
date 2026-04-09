@@ -1424,8 +1424,21 @@ function renderMap() {
     if (!activeLayers.has(c.hearing_layer)) return;
     if (c.confidence === 'low') return;
     const a = stationPos[c.source];
-    const b = stationPos[c.target];
-    if (!a || !b) return;
+
+    // For group targets, draw lines to each known member instead
+    let targets = [];
+    if (c.target_type === 'group') {
+      const g = _groups.find(x => x.name === c.target);
+      if (g && g.members) {
+        g.members.forEach(m => {
+          if (stationPos[m] && m !== c.source) targets.push(stationPos[m]);
+        });
+      }
+    } else {
+      const b = stationPos[c.target];
+      if (b) targets.push(b);
+    }
+    if (!a || targets.length === 0) return;
 
     // Fade: full opacity if < 5 min old, gone by 10 min
     const ageMins = (nowMs - new Date(c.last_seen_at).getTime()) / 60000;
@@ -1444,21 +1457,21 @@ function renderMap() {
     const lineOpacity = isHlConn ? Math.min(1, opacity * 2) : opacity;
     const lineWeight  = isHlConn ? weight + 2 : weight;
 
-    // Solid base line (direction: source → target)
-    L.polyline([a, b], {
-      color, weight: Math.max(1, lineWeight - 1), opacity: lineOpacity * 0.4,
-    }).addTo(lineLayer);
+    targets.forEach(b => {
+      // Solid base line (direction: source → target)
+      L.polyline([a, b], {
+        color, weight: Math.max(1, lineWeight - 1), opacity: lineOpacity * 0.4,
+      }).addTo(lineLayer);
 
-    // Animated flow dash on top — moves from a to b (source to target)
-    const flowLine = L.polyline([a, b], {
-      color, weight: lineWeight,
-      opacity: lineOpacity,
-      dashArray: '8 12',
-      dashOffset: '0',
-      className: 'flow-line',
-    }).addTo(lineLayer);
-
-
+      // Animated flow dash on top — moves from a to b (source to target)
+      L.polyline([a, b], {
+        color, weight: lineWeight,
+        opacity: lineOpacity,
+        dashArray: '8 12',
+        dashOffset: '0',
+        className: 'flow-line',
+      }).addTo(lineLayer);
+    });
   });
 
   document.getElementById('s-conns').textContent = connections.length;
