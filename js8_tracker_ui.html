@@ -825,6 +825,7 @@ html, body {
     <div id="mystation-card">
       <div class="mystation-call" id="my-call">—</div>
       <div class="mystation-meta" id="my-meta">local station</div>
+      <div class="mystation-meta" id="my-freq" style="color:var(--cyan);font-size:10px;"></div>
     </div>
     <div id="group-strip"></div>
     <div id="group-detail">
@@ -1135,6 +1136,16 @@ async function fetchStatus() {
       _myCall = d.my_call || MY_CALL;
       _myGrid = d.my_grid;
       document.getElementById('my-meta').textContent = `${d.my_grid} · local station`;
+    }
+    const freqEl = document.getElementById('my-freq');
+    if (freqEl) {
+      if (d.current_dial_freq_hz) {
+        const mhz = (d.current_dial_freq_hz / 1_000_000).toFixed(3);
+        const band = d.current_band ? ` · ${d.current_band}` : '';
+        freqEl.textContent = `${mhz} MHz${band}`;
+      } else {
+        freqEl.textContent = '';
+      }
     }
   } catch(e) {}
 }
