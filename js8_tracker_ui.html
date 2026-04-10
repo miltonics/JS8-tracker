@@ -8,6 +8,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// Fallback if unpkg fails to load Leaflet
+if (typeof L === 'undefined') {
+  document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>');
+}
+</script>
 <style>
 :root {
   --bg:        #0a0c0f;
@@ -17,7 +23,7 @@
   --border2:   #253040;
   --text:      #c8d8e8;
   --text-dim:  #5a7080;
-  --text-mute: #2e404f;
+  --text-mute: #5a7a8a;
   --green:     #00e57a;
   --green-dim: #007a42;
   --amber:     #f0a020;
@@ -734,6 +740,52 @@ html, body {
 .sd-grid-src  { color: var(--text-mute); font-size: 9px; min-width: 30px; }
 .sd-grid-time { color: var(--text-mute); font-size: 9px; }
 
+/* ── COMPACT MODE ───────────────────────────────────────── */
+body.compact {
+  font-size: 11px;
+}
+body.compact .station-call { font-size: 12px; }
+body.compact .station-row  { padding: 3px 8px; }
+body.compact .event-row    { padding: 2px 8px; }
+body.compact .panel-header { padding: 3px 8px; }
+body.compact .mystation-call { font-size: 15px; }
+body.compact #mystation-card { padding: 5px 8px; }
+body.compact .group-detail-name { font-size: 13px; }
+body.compact .sd-section   { padding: 5px 8px; }
+body.compact #header       { height: 36px; }
+body.compact #main         { height: calc(100vh - 36px); }
+body.compact .snr-badge    { font-size: 10px; }
+body.compact .conn-chip    { font-size: 9px; padding: 1px 6px; }
+body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8px; }
+
+/* ── COLLAPSIBLE PANELS ──────────────────────────────────── */
+.panel-collapse-btn {
+  font-size: 10px;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  line-height: 1;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.panel-collapse-btn:hover { color: var(--cyan); }
+
+#panel-stations.collapsed { width: 28px !important; min-width: 28px; flex: none; }
+#panel-events.collapsed   { width: 28px !important; min-width: 28px; flex: none; }
+#panel-stations.collapsed .panel-body,
+#panel-stations.collapsed #mystation-card,
+#panel-stations.collapsed #group-detail,
+#panel-stations.collapsed #group-strip,
+#panel-events.collapsed .panel-body,
+#panel-events.collapsed #event-filter { display: none; }
+#panel-stations.collapsed .panel-header .panel-title,
+#panel-stations.collapsed .panel-header .panel-count,
+#panel-events.collapsed .panel-header .panel-title,
+#panel-events.collapsed .panel-header .panel-count { display: none; }
+.panel.collapsed .panel-collapse-btn { transform: scaleX(-1); }
+
 /* ── RESPONSIVE ──────────────────────────────────────── */
 @media (max-width: 900px) {
   #main { grid-template-columns: 1fr; grid-template-rows: auto 300px auto; overflow-y: auto; }
@@ -803,6 +855,11 @@ html, body {
     <div id="band-pills" style="display:flex;gap:4px;"></div>
   </div>
 
+  <!-- Compact mode toggle -->
+  <div style="display:flex;gap:4px;align-items:center;">
+    <div class="pill" id="compact-btn" onclick="toggleCompact()" title="Compact mode">⊟ Compact</div>
+  </div>
+
   <div id="header-right">
     <div id="decay-legend">
       <div class="decay-item"><div class="decay-dot" style="background:var(--green)"></div><span>Current</span></div>
@@ -819,6 +876,7 @@ html, body {
   <!-- LEFT: Stations -->
   <div class="panel" id="panel-stations">
     <div class="panel-header">
+      <button class="panel-collapse-btn" onclick="collapsePanel('panel-stations')" title="Hide panel">‹</button>
       <span class="panel-title">Stations</span>
       <span class="panel-count" id="station-count">0</span>
     </div>
@@ -849,6 +907,7 @@ html, body {
   <!-- RIGHT: Events -->
   <div class="panel" id="panel-events" style="position:relative;">
     <div class="panel-header">
+      <button class="panel-collapse-btn" onclick="collapsePanel('panel-events')" title="Hide panel">›</button>
       <span class="panel-title">Event Stream</span>
       <span class="panel-count" id="event-count">0</span>
     </div>
@@ -877,6 +936,25 @@ html, body {
 // ── CONFIG ────────────────────────────────────────────────
 const API = 'http://127.0.0.1:5000';
 // version shown from backend BUILD_TAG only
+let _compactMode = false;
+
+function toggleCompact() {
+  _compactMode = !_compactMode;
+  document.body.classList.toggle('compact', _compactMode);
+  const btn = document.getElementById('compact-btn');
+  if (btn) {
+    btn.textContent = _compactMode ? '⊞ Normal' : '⊟ Compact';
+    btn.classList.toggle('active', _compactMode);
+  }
+}
+
+function collapsePanel(id) {
+  const panel = document.getElementById(id);
+  if (!panel) return;
+  panel.classList.toggle('collapsed');
+  // Trigger map resize after animation (guard in case map not ready)
+  setTimeout(() => { try { map.invalidateSize(); } catch(e) {} }, 50);
+}
 const POLL_STATUS_MS   = 5000;
 const POLL_STATIONS_MS = 8000;
 const POLL_EVENTS_MS   = 4000;
