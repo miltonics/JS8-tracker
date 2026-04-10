@@ -49,7 +49,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.4.2"
+BUILD_TAG = "js8-tracker-0.4.3"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
@@ -96,6 +96,9 @@ HAMQTH_CRED_FILE = Path.home() / ".config" / "js8_gt_bridge" / "hamqth.json"
 HAMQTH_LOOKUP_TIMEOUT = 6          # seconds per HTTP request
 HAMQTH_CACHE_TTL = 7 * 24 * 3600  # 7 days in seconds
 HAMQTH_FAIL_TTL  = 3600            # suppress re-lookup of unknown calls for 1 hour
+
+# Offline FCC database (optional) — built by running setup_fcc_db.py
+FCC_DB_PATH = Path(__file__).parent / "fcc_offline.db"
 
 # ── USER CONFIG ───────────────────────────────────────────
 # Set your callsign here. This is the only line most users need to change.
@@ -275,6 +278,7 @@ class StatusResponse(BaseModel):
     last_prune_deleted: int
     js8call_api_connected: bool
     js8call_api_packets: int
+    fcc_db_available: bool
     current_band: Optional[str]
     current_dial_freq_hz: Optional[int]
 
@@ -378,6 +382,7 @@ STATUS: dict = {
     "last_prune_at": None,
     "last_prune_deleted": 0,
     "js8call_api_connected": False,
+    "fcc_db_available": False,
     "js8call_api_packets": 0,
     "current_band": None,
     "current_dial_freq_hz": None,
@@ -510,6 +515,28 @@ def callook_lookup_grid(callsign: str) -> Optional[str]:
     return None
 
 
+def fcc_lookup_grid(callsign: str) -> Optional[str]:
+    """
+    Offline FCC database lookup. Returns grid or None.
+    Only available if setup_fcc_db.py has been run.
+    Covers all US callsigns with active licenses.
+    """
+    if not FCC_DB_PATH.exists():
+        return None
+    try:
+        con = sqlite3.connect(str(FCC_DB_PATH))
+        try:
+            row = con.execute(
+                "SELECT grid FROM callsigns WHERE callsign = ? AND status = 'A'",
+                (callsign.upper(),)
+            ).fetchone()
+            return row[0] if row and row[0] else None
+        finally:
+            con.close()
+    except Exception:
+        return None
+
+
 # ============================================================
 # Grid cache  (thread-safe, TTL-based)
 # ============================================================
@@ -617,6 +644,15 @@ def _lookup_worker() -> None:
                         print(f"[js8-tracker] lookup {callsign} -> {grid} (callook)", flush=True)
                 except Exception as exc:
                     print(f"[js8-tracker] callook error for {callsign}: {exc}", flush=True)
+
+            # Fallback to offline FCC database
+            if not grid:
+                try:
+                    grid = fcc_lookup_grid(callsign)
+                    if grid:
+                        print(f"[js8-tracker] lookup {callsign} -> {grid} (FCC offline)", flush=True)
+                except Exception as exc:
+                    print(f"[js8-tracker] FCC offline error for {callsign}: {exc}", flush=True)
 
             # Store result and update DB
             _grid_cache.put(callsign, grid)
@@ -1890,6 +1926,7 @@ def api_status() -> StatusResponse:
         last_prune_at=snapshot["last_prune_at"],
         last_prune_deleted=snapshot["last_prune_deleted"],
         js8call_api_connected=snapshot["js8call_api_connected"],
+        fcc_db_available=FCC_DB_PATH.exists(),
         js8call_api_packets=snapshot["js8call_api_packets"],
         current_band=snapshot["current_band"],
         current_dial_freq_hz=snapshot["current_dial_freq_hz"],
@@ -2409,6 +2446,13 @@ if __name__ == "__main__":
                 print(f"[js8-tracker] own grid: not found in HamQTH", flush=True)
         except Exception as exc:
             print(f"[js8-tracker] own grid lookup failed: {exc}", flush=True)
+
+    if FCC_DB_PATH.exists():
+        print(f"[js8-tracker] FCC offline database: {FCC_DB_PATH}", flush=True)
+        with STATUS_LOCK:
+            STATUS["fcc_db_available"] = True
+    else:
+        print(f"[js8-tracker] FCC offline database not found. Run: python3 setup_fcc_db.py", flush=True)
 
     print(f"[js8-tracker] build tag: {BUILD_TAG}", flush=True)
     print(f"[js8-tracker] starting HTTP on {HTTP_HOST}:{HTTP_PORT}", flush=True)
