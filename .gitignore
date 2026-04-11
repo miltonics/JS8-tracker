@@ -10,3 +10,6 @@ dist/
 build/
 venv/
 OLD/
+*.db
+*.db-shm
+*.db-wal
