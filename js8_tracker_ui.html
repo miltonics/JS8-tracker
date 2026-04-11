@@ -215,7 +215,6 @@ html, body {
 .panel-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
 /* ── LEFT PANEL: STATIONS ─────────────────────────────── */
-#panel-stations { grid-row: 1; grid-column: 1; }
 
 .station-row {
   display: grid;
@@ -342,7 +341,7 @@ html, body {
 }
 
 /* ── RIGHT PANEL: EVENTS ──────────────────────────────── */
-#panel-events { grid-row: 1; grid-column: 3; }
+
 
 .event-row {
   padding: 4px 10px;
@@ -1096,7 +1095,7 @@ function applySettings() {
 
 function setFontSize(size, noSave) {
   _settings.fontSize = size;
-  document.documentElement.style.fontSize = size + 'px';
+  document.body.style.fontSize = size + 'px';
   document.querySelectorAll('.settings-btn[onclick*="setFontSize"]').forEach(b => {
     b.classList.toggle('active', b.textContent === ['S','M','L','XL'][['12','13','14','15'].indexOf(String(size))]);
   });
@@ -1138,8 +1137,16 @@ function _applyPanelVisible(panel, visible, noSave) {
   const s = _settings.panelsVisible.stations;
   const m = _settings.panelsVisible.map;
   const e = _settings.panelsVisible.events;
-  const cols = [s ? '280px' : '', m ? '1fr' : '', e ? '300px' : '']
-    .filter(Boolean).join(' ') || '1fr';
+  // Map always gets flexible space; sides get fixed widths when visible
+  let cols;
+  if (s && m && e) cols = '280px 1fr 300px';
+  else if (s && m)  cols = '280px 1fr';
+  else if (m && e)  cols = '1fr 300px';
+  else if (s && e)  cols = '1fr 1fr';  // both share equally when no map
+  else if (m)       cols = '1fr';
+  else if (s)       cols = '1fr';
+  else if (e)       cols = '1fr';
+  else              cols = '1fr';
   document.getElementById('main').style.gridTemplateColumns = cols;
   setTimeout(() => { try { map.invalidateSize(); } catch(e2) {} }, 210);
   if (!noSave) saveSettings();
