@@ -158,14 +158,18 @@ html, body {
 
 /* ── MAIN LAYOUT ──────────────────────────────────────── */
 #main {
-  display: grid;
-  grid-template-columns: 280px 1fr 300px;
-  grid-template-rows: 1fr;
+  display: flex;
+  flex-direction: row;
   height: calc(100vh - var(--header-h) - var(--panel-gap) * 2);
-  gap: var(--panel-gap);
+  gap: 0;
   padding: var(--panel-gap);
-  transition: grid-template-columns 0.2s ease;
+  overflow: hidden;
 }
+#panel-stations { width: 280px; min-width: 120px; flex-shrink: 0; }
+#panel-map      { flex: 1; min-width: 200px; }
+#panel-events   { width: 300px; min-width: 120px; flex-shrink: 0; }
+#panel-stations.hidden, #panel-map.hidden, #panel-events.hidden { display: none !important; }
+.drag-handle.hidden { display: none !important; }
 #panel-stations { display: flex; }
 #panel-map      { display: flex; }
 #panel-events   { display: flex; }
@@ -860,6 +864,29 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
 }
 .settings-input:focus { outline: none; border-color: var(--cyan); }
 
+/* ── DRAG HANDLES ───────────────────────────────────────── */
+.drag-handle {
+  width: 4px;
+  background: var(--border);
+  cursor: col-resize;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  transition: background 0.15s;
+  border-radius: 2px;
+}
+.drag-handle:hover, .drag-handle.dragging {
+  background: var(--cyan);
+  width: 4px;
+}
+.drag-handle::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -4px; right: -4px;
+  cursor: col-resize;
+}
+
 /* ── RESPONSIVE ──────────────────────────────────────── */
 @media (max-width: 900px) {
   #main { grid-template-columns: 1fr; grid-template-rows: auto 300px auto; overflow-y: auto; }
@@ -1019,6 +1046,8 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
     </div>
   </div>
 
+  <div class="drag-handle" id="drag-left" title="Drag to resize"></div>
+
   <!-- CENTER: Map + connection strip -->
   <div class="panel" id="panel-map">
     <div id="map"></div>
@@ -1026,6 +1055,8 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
       <span style="color:var(--text-mute);font-size:10px;">Connections will appear here</span>
     </div>
   </div>
+
+  <div class="drag-handle" id="drag-right" title="Drag to resize"></div>
 
   <!-- RIGHT: Events -->
   <div class="panel" id="panel-events" style="position:relative;">
@@ -1133,22 +1164,28 @@ function _applyPanelVisible(panel, visible, noSave) {
   if (!el) return;
   el.classList.toggle('hidden', !visible);
   if (btn) btn.classList.toggle('active', visible);
-  // Recompute grid columns
+
+  // Show/hide drag handles based on which panels are visible
   const s = _settings.panelsVisible.stations;
   const m = _settings.panelsVisible.map;
   const e = _settings.panelsVisible.events;
-  // Map always gets flexible space; sides get fixed widths when visible
-  let cols;
-  if (s && m && e) cols = '280px 1fr 300px';
-  else if (s && m)  cols = '280px 1fr';
-  else if (m && e)  cols = '1fr 300px';
-  else if (s && e)  cols = '1fr 1fr';  // both share equally when no map
-  else if (m)       cols = '1fr';
-  else if (s)       cols = '1fr';
-  else if (e)       cols = '1fr';
-  else              cols = '1fr';
-  document.getElementById('main').style.gridTemplateColumns = cols;
-  setTimeout(() => { try { map.invalidateSize(); } catch(e2) {} }, 210);
+  const dl = document.getElementById('drag-left');
+  const dr = document.getElementById('drag-right');
+  if (dl) dl.classList.toggle('hidden', !(s && m) && !(s && e));
+  if (dr) dr.classList.toggle('hidden', !(m && e) && !(s && e));
+
+  // When map hidden and both side panels visible, make them equal flex
+  const stEl = document.getElementById('panel-stations');
+  const evEl = document.getElementById('panel-events');
+  if (!m && s && e) {
+    if (stEl) stEl.style.flex = '1';
+    if (evEl) { evEl.style.flex = '1'; evEl.style.width = 'auto'; }
+  } else {
+    if (stEl) stEl.style.flex = '';
+    if (evEl) { evEl.style.flex = ''; evEl.style.width = evEl._savedWidth || '300px'; }
+  }
+
+  setTimeout(() => { try { map.invalidateSize(); } catch(e2) {} }, 50);
   if (!noSave) saveSettings();
 }
 
@@ -2181,6 +2218,50 @@ function tickPendingTimers() {
 }
 setInterval(tickPendingTimers, 1000);
 
+// ── DRAG-TO-RESIZE ────────────────────────────────────────
+function initDragHandles() {
+  setupDragHandle('drag-left',  'panel-stations', 'left',  120, 600);
+  setupDragHandle('drag-right', 'panel-events',   'right', 120, 600);
+}
+
+function setupDragHandle(handleId, panelId, side, minW, maxW) {
+  const handle = document.getElementById(handleId);
+  const panel  = document.getElementById(panelId);
+  if (!handle || !panel) return;
+
+  let startX, startW;
+
+  handle.addEventListener('mousedown', e => {
+    startX = e.clientX;
+    startW = panel.getBoundingClientRect().width;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(e) {
+      const dx = e.clientX - startX;
+      const newW = Math.max(minW, Math.min(maxW,
+        side === 'left' ? startW + dx : startW - dx
+      ));
+      panel.style.width = newW + 'px';
+      panel._savedWidth = newW + 'px';
+      try { map.invalidateSize(); } catch(err) {}
+    }
+
+    function onUp() {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+}
+
 // ── POLL LOOPS ────────────────────────────────────────────
 async function pollAll() {
   await fetchStatus();
@@ -2191,6 +2272,7 @@ async function pollAll() {
 }
 
 loadSettings();
+initDragHandles();
 pollAll();
 setInterval(fetchStatus,      POLL_STATUS_MS);
 setInterval(fetchStations,    POLL_STATIONS_MS);
