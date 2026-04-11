@@ -35,7 +35,8 @@ if (typeof L === 'undefined') {
   --cyan:      #20c8d0;
   --mono:      'Share Tech Mono', monospace;
   --sans:      'Barlow Condensed', sans-serif;
-  --header-h:  42px;
+  --header-h:  80px;  /* two-row expanded */
+  --header-h1:  42px; /* single row collapsed */
   --panel-gap: 4px;
 }
 
@@ -46,21 +47,36 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   overflow: hidden;
 }
 
 /* ── HEADER ─────────────────────────────────────────── */
 #header {
-  height: var(--header-h);
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#header-row1 {
+  height: var(--header-h1);
   display: flex;
   align-items: center;
   padding: 0 12px;
-  gap: 16px;
-  flex-shrink: 0;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
 }
+#header-row2 {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 6px;
+  background: var(--bg3);
+}
+#header.collapsed #header-row2 { display: none; }
+#header.collapsed { border-bottom: 1px solid var(--border); }
+#header.collapsed + #main { height: calc(100vh - var(--header-h1) - var(--panel-gap) * 2); }
+#main { height: calc(100vh - var(--header-h) - var(--panel-gap) * 2); }
 
 #logo {
   font-family: var(--sans);
@@ -145,10 +161,15 @@ html, body {
   display: grid;
   grid-template-columns: 280px 1fr 300px;
   grid-template-rows: 1fr;
-  height: calc(100vh - var(--header-h));
+  height: calc(100vh - var(--header-h) - var(--panel-gap) * 2);
   gap: var(--panel-gap);
   padding: var(--panel-gap);
+  transition: grid-template-columns 0.2s ease;
 }
+#panel-stations { display: flex; }
+#panel-map      { display: flex; }
+#panel-events   { display: flex; }
+#panel-stations.hidden, #panel-map.hidden, #panel-events.hidden { display: none; }
 
 /* ── PANELS ───────────────────────────────────────────── */
 .panel {
@@ -752,39 +773,93 @@ body.compact .mystation-call { font-size: 15px; }
 body.compact #mystation-card { padding: 5px 8px; }
 body.compact .group-detail-name { font-size: 13px; }
 body.compact .sd-section   { padding: 5px 8px; }
-body.compact #header       { height: 36px; }
-body.compact #main         { height: calc(100vh - 36px); }
+body.compact #header-row1  { height: 32px; }
+body.compact #header-row2  { height: 26px; }
 body.compact .snr-badge    { font-size: 10px; }
 body.compact .conn-chip    { font-size: 9px; padding: 1px 6px; }
 body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8px; }
 
-/* ── COLLAPSIBLE PANELS ──────────────────────────────────── */
-.panel-collapse-btn {
-  font-size: 10px;
-  color: var(--text-mute);
+/* ── PANEL TOGGLE BUTTONS (row 2) ────────────────────────── */
+.ptoggle {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 2px;
   cursor: pointer;
-  padding: 0 4px;
-  border: none;
-  background: none;
-  line-height: 1;
-  transition: color 0.15s;
-  flex-shrink: 0;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text-dim);
+  transition: all 0.15s;
+  user-select: none;
+  font-family: var(--sans);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
-.panel-collapse-btn:hover { color: var(--cyan); }
+.ptoggle:hover { border-color: var(--cyan); color: var(--cyan); }
+.ptoggle.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+.ptoggle-sep { width: 1px; background: var(--border); height: 20px; margin: 0 4px; }
 
-#panel-stations.collapsed { width: 28px !important; min-width: 28px; flex: none; }
-#panel-events.collapsed   { width: 28px !important; min-width: 28px; flex: none; }
-#panel-stations.collapsed .panel-body,
-#panel-stations.collapsed #mystation-card,
-#panel-stations.collapsed #group-detail,
-#panel-stations.collapsed #group-strip,
-#panel-events.collapsed .panel-body,
-#panel-events.collapsed #event-filter { display: none; }
-#panel-stations.collapsed .panel-header .panel-title,
-#panel-stations.collapsed .panel-header .panel-count,
-#panel-events.collapsed .panel-header .panel-title,
-#panel-events.collapsed .panel-header .panel-count { display: none; }
-.panel.collapsed .panel-collapse-btn { transform: scaleX(-1); }
+/* ── SETTINGS PANEL ──────────────────────────────────────── */
+#settings-panel {
+  display: none;
+  position: fixed;
+  top: calc(var(--header-h1) + 34px + 8px);
+  right: 12px;
+  width: 280px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.8);
+}
+#settings-panel.visible { display: block; }
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.settings-body { padding: 10px 12px; }
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-label { color: var(--text-dim); }
+.settings-control { display: flex; gap: 4px; align-items: center; }
+.settings-btn {
+  font-size: 10px;
+  padding: 2px 7px;
+  border: 1px solid var(--border2);
+  border-radius: 2px;
+  background: var(--bg3);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.settings-btn:hover, .settings-btn.active { border-color: var(--cyan); color: var(--cyan); background: var(--blue-dim); }
+.settings-input {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  width: 120px;
+}
+.settings-input:focus { outline: none; border-color: var(--cyan); }
 
 /* ── RESPONSIVE ──────────────────────────────────────── */
 @media (max-width: 900px) {
@@ -797,76 +872,126 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
 
 <!-- ── HEADER ── -->
 <div id="header">
-  <div id="logo">JS8<span>-</span>tracker <span id="version-tag" style="font-size:10px;color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span></div>
 
-  <div id="status-bar">
-    <div class="stat-block">
-      <span class="stat-label">Decodes</span>
-      <span class="stat-value" id="s-decodes">—</span>
+  <!-- ROW 1: title + stats + controls -->
+  <div id="header-row1">
+    <div id="logo">JS8<span>-</span>tracker <span id="version-tag" style="font-size:10px;color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span></div>
+
+    <div id="status-bar">
+      <div class="stat-block">
+        <span class="stat-label">Decodes</span>
+        <span class="stat-value" id="s-decodes">—</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-label">Hi Conf</span>
+        <span class="stat-value hi" id="s-high">—</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-label">Stations</span>
+        <span class="stat-value" id="s-stations">—</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-label">Conns</span>
+        <span class="stat-value" id="s-conns">—</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-label">Lookup</span>
+        <span class="stat-value" id="s-lookup">—</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-label">Last RX</span>
+        <span class="stat-value" id="s-lastevt">—</span>
+      </div>
     </div>
-    <div class="stat-block">
-      <span class="stat-label">High conf</span>
-      <span class="stat-value hi" id="s-high">—</span>
+
+    <!-- Layer toggles -->
+    <div style="display:flex;gap:4px;align-items:center;">
+      <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:4px;">Layers</span>
+      <div class="pill layer-direct active"  data-layer="direct"   onclick="toggleLayer(this)">Direct</div>
+      <div class="pill layer-reported active" data-layer="reported" onclick="toggleLayer(this)">Reported</div>
+      <div class="pill layer-inferred"        data-layer="inferred" onclick="toggleLayer(this)">Inferred</div>
     </div>
-    <div class="stat-block">
-      <span class="stat-label">Stations</span>
-      <span class="stat-value" id="s-stations">—</span>
+
+    <!-- Window slider -->
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;">Window</span>
+      <input type="range" id="window-slider" min="1" max="1440" value="30" step="1"
+        style="width:80px;accent-color:var(--cyan);cursor:pointer;vertical-align:middle;"
+        oninput="onWindowSlider(this)">
+      <span id="window-label" style="font-size:11px;color:var(--cyan);min-width:32px;font-family:var(--mono);">30m</span>
+      <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;">
+        <input type="checkbox" id="window-all" onchange="onWindowAll(this)" style="accent-color:var(--cyan);cursor:pointer;">All
+      </label>
     </div>
-    <div class="stat-block">
-      <span class="stat-label">Connections</span>
-      <span class="stat-value" id="s-conns">—</span>
+
+    <!-- Band filter -->
+    <div style="display:flex;gap:4px;align-items:center;">
+      <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:4px;">Band</span>
+      <div class="pill band-active" id="band-auto" onclick="setBand('auto')" title="Follow current frequency">Auto</div>
+      <div id="band-pills" style="display:flex;gap:4px;"></div>
     </div>
-    <div class="stat-block">
-      <span class="stat-label">Lookup</span>
-      <span class="stat-value" id="s-lookup">—</span>
-    </div>
-    <div class="stat-block">
-      <span class="stat-label">Last RX</span>
-      <span class="stat-value" id="s-lastevt">—</span>
+
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+      <div id="decay-legend">
+        <div class="decay-item"><div class="decay-dot" style="background:var(--green)"></div><span>Now</span></div>
+        <div class="decay-item"><div class="decay-dot" style="background:var(--amber)"></div><span>Recent</span></div>
+        <div class="decay-item"><div class="decay-dot" style="background:var(--text-mute)"></div><span>Stale</span></div>
+      </div>
+      <div id="rx-indicator" title="RX activity"></div>
+      <!-- Settings -->
+      <div class="pill" onclick="toggleSettings()" title="Settings" style="font-size:13px;padding:2px 7px;">⚙</div>
+      <!-- Header collapse -->
+      <div class="pill" id="header-toggle" onclick="toggleHeader()" title="Collapse header" style="font-size:11px;">▲</div>
     </div>
   </div>
 
-  <!-- Layer toggles -->
-  <div style="display:flex;gap:4px;align-items:center;">
-    <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:4px;">Layers</span>
-    <div class="pill layer-direct active"  data-layer="direct"   onclick="toggleLayer(this)">Direct</div>
-    <div class="pill layer-reported active" data-layer="reported" onclick="toggleLayer(this)">Reported</div>
-    <div class="pill layer-inferred"        data-layer="inferred" onclick="toggleLayer(this)">Inferred</div>
+  <!-- ROW 2: panel toggles -->
+  <div id="header-row2">
+    <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:6px;">Panels</span>
+    <div class="ptoggle active" id="pt-stations" onclick="togglePanel('stations')">Stations</div>
+    <div class="ptoggle active" id="pt-map"      onclick="togglePanel('map')">Map</div>
+    <div class="ptoggle active" id="pt-events"   onclick="togglePanel('events')">Events</div>
+    <div class="ptoggle-sep"></div>
+    <div class="pill" id="compact-btn" onclick="toggleCompact()" title="Compact mode" style="font-size:11px;">Compact</div>
   </div>
+</div>
 
-  <!-- Decay window slider -->
-  <div style="display:flex;gap:8px;align-items:center;">
-    <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;">Window</span>
-    <input type="range" id="window-slider" min="1" max="1440" value="30" step="1"
-      style="width:90px;accent-color:var(--cyan);cursor:pointer;vertical-align:middle;"
-      oninput="onWindowSlider(this)">
-    <span id="window-label" style="font-size:11px;color:var(--cyan);min-width:36px;font-family:var(--mono);">30m</span>
-    <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;">
-      <input type="checkbox" id="window-all" onchange="onWindowAll(this)"
-        style="accent-color:var(--cyan);cursor:pointer;">
-      All
-    </label>
+<!-- ── SETTINGS PANEL ── -->
+<div id="settings-panel">
+  <div class="settings-header">
+    Settings
+    <span style="cursor:pointer;color:var(--text-mute);" onclick="toggleSettings()">✕</span>
   </div>
-
-  <!-- Band filter -->
-  <div style="display:flex;gap:4px;align-items:center;">
-    <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:4px;">Band</span>
-    <div class="pill band-active" id="band-auto" onclick="setBand('auto')" title="Follow current frequency">Auto</div>
-    <div id="band-pills" style="display:flex;gap:4px;"></div>
-  </div>
-
-  <!-- Compact mode toggle -->
-  <div style="display:flex;gap:4px;align-items:center;">
-    <div class="pill" id="compact-btn" onclick="toggleCompact()" title="Compact mode">⊟ Compact</div>
-  </div>
-
-  <div id="header-right">
-    <div id="decay-legend">
-      <div class="decay-item"><div class="decay-dot" style="background:var(--green)"></div><span>Current</span></div>
-      <div class="decay-item"><div class="decay-dot" style="background:var(--amber)"></div><span>Recent</span></div>
-      <div class="decay-item"><div class="decay-dot" style="background:var(--text-mute)"></div><span>Stale</span></div>
+  <div class="settings-body">
+    <div class="settings-row">
+      <span class="settings-label">Font size</span>
+      <div class="settings-control">
+        <button class="settings-btn" onclick="setFontSize(12)">S</button>
+        <button class="settings-btn active" id="fs-m" onclick="setFontSize(13)">M</button>
+        <button class="settings-btn" onclick="setFontSize(14)">L</button>
+        <button class="settings-btn" onclick="setFontSize(15)">XL</button>
+      </div>
     </div>
-    <div id="rx-indicator" title="RX activity"></div>
+    <div class="settings-row">
+      <span class="settings-label">Compact mode</span>
+      <div class="settings-control">
+        <button class="settings-btn" id="s-compact" onclick="toggleCompact()">Off</button>
+      </div>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Callsign</span>
+      <div class="settings-control">
+        <input class="settings-input" id="s-mycall" placeholder="KE8SWO" onchange="saveMycall(this.value)">
+      </div>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Connection fade</span>
+      <div class="settings-control">
+        <button class="settings-btn active" onclick="setFade(5)">5m</button>
+        <button class="settings-btn" onclick="setFade(10)">10m</button>
+        <button class="settings-btn" onclick="setFade(30)">30m</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -876,7 +1001,6 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
   <!-- LEFT: Stations -->
   <div class="panel" id="panel-stations">
     <div class="panel-header">
-      <button class="panel-collapse-btn" onclick="collapsePanel('panel-stations')" title="Hide panel">‹</button>
       <span class="panel-title">Stations</span>
       <span class="panel-count" id="station-count">0</span>
     </div>
@@ -907,7 +1031,6 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
   <!-- RIGHT: Events -->
   <div class="panel" id="panel-events" style="position:relative;">
     <div class="panel-header">
-      <button class="panel-collapse-btn" onclick="collapsePanel('panel-events')" title="Hide panel">›</button>
       <span class="panel-title">Event Stream</span>
       <span class="panel-count" id="event-count">0</span>
     </div>
@@ -936,25 +1059,112 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
 // ── CONFIG ────────────────────────────────────────────────
 const API = 'http://127.0.0.1:5000';
 // version shown from backend BUILD_TAG only
+
+// ── SETTINGS PERSISTENCE ────────────────────────────────
+const SETTINGS_KEY = 'js8tracker_settings';
+let _settings = {
+  fontSize: 13,
+  compact: false,
+  headerCollapsed: false,
+  panelsVisible: { stations: true, map: true, events: true },
+  connectionFadeMinutes: 5,
+};
+
+function loadSettings() {
+  try {
+    const saved = localStorage.getItem(SETTINGS_KEY);
+    if (saved) Object.assign(_settings, JSON.parse(saved));
+  } catch(e) {}
+  applySettings();
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(_settings)); } catch(e) {}
+}
+
+function applySettings() {
+  setFontSize(_settings.fontSize, true);
+  if (_settings.compact) document.body.classList.add('compact');
+  if (_settings.headerCollapsed) {
+    document.getElementById('header').classList.add('collapsed');
+    document.getElementById('header-toggle').textContent = '▼';
+  }
+  Object.keys(_settings.panelsVisible).forEach(p => {
+    _applyPanelVisible(p, _settings.panelsVisible[p], true);
+  });
+}
+
+function setFontSize(size, noSave) {
+  _settings.fontSize = size;
+  document.documentElement.style.fontSize = size + 'px';
+  document.querySelectorAll('.settings-btn[onclick*="setFontSize"]').forEach(b => {
+    b.classList.toggle('active', b.textContent === ['S','M','L','XL'][['12','13','14','15'].indexOf(String(size))]);
+  });
+  if (!noSave) saveSettings();
+}
+
+function setFade(mins) {
+  _settings.connectionFadeMinutes = mins;
+  document.querySelectorAll('.settings-btn[onclick*="setFade"]').forEach(b => {
+    b.classList.toggle('active', b.textContent === mins + 'm');
+  });
+  saveSettings();
+  renderMap();
+}
+
+function toggleSettings() {
+  document.getElementById('settings-panel').classList.toggle('visible');
+}
+
+function toggleHeader() {
+  const h = document.getElementById('header');
+  const collapsed = h.classList.toggle('collapsed');
+  _settings.headerCollapsed = collapsed;
+  document.getElementById('header-toggle').textContent = collapsed ? '▼' : '▲';
+  // Recalc main height
+  const hh = collapsed ? 'var(--header-h1)' : 'var(--header-h)';
+  document.getElementById('main').style.height = `calc(100vh - ${hh} - var(--panel-gap) * 2)`;
+  setTimeout(() => { try { map.invalidateSize(); } catch(e) {} }, 210);
+  saveSettings();
+}
+
+function _applyPanelVisible(panel, visible, noSave) {
+  const el = document.getElementById('panel-' + panel);
+  const btn = document.getElementById('pt-' + panel);
+  if (!el) return;
+  el.classList.toggle('hidden', !visible);
+  if (btn) btn.classList.toggle('active', visible);
+  // Recompute grid columns
+  const s = _settings.panelsVisible.stations;
+  const m = _settings.panelsVisible.map;
+  const e = _settings.panelsVisible.events;
+  const cols = [s ? '280px' : '', m ? '1fr' : '', e ? '300px' : '']
+    .filter(Boolean).join(' ') || '1fr';
+  document.getElementById('main').style.gridTemplateColumns = cols;
+  setTimeout(() => { try { map.invalidateSize(); } catch(e2) {} }, 210);
+  if (!noSave) saveSettings();
+}
+
+function togglePanel(panel) {
+  _settings.panelsVisible[panel] = !_settings.panelsVisible[panel];
+  _applyPanelVisible(panel, _settings.panelsVisible[panel]);
+  saveSettings();
+}
+
 let _compactMode = false;
 
 function toggleCompact() {
   _compactMode = !_compactMode;
+  _settings.compact = _compactMode;
   document.body.classList.toggle('compact', _compactMode);
   const btn = document.getElementById('compact-btn');
-  if (btn) {
-    btn.textContent = _compactMode ? '⊞ Normal' : '⊟ Compact';
-    btn.classList.toggle('active', _compactMode);
-  }
+  if (btn) btn.classList.toggle('active', _compactMode);
+  const sb = document.getElementById('s-compact');
+  if (sb) sb.textContent = _compactMode ? 'On' : 'Off';
+  saveSettings();
 }
 
-function collapsePanel(id) {
-  const panel = document.getElementById(id);
-  if (!panel) return;
-  panel.classList.toggle('collapsed');
-  // Trigger map resize after animation (guard in case map not ready)
-  setTimeout(() => { try { map.invalidateSize(); } catch(e) {} }, 50);
-}
+// collapsePanel replaced by togglePanel
 const POLL_STATUS_MS   = 5000;
 const POLL_STATIONS_MS = 8000;
 const POLL_EVENTS_MS   = 4000;
@@ -1601,8 +1811,9 @@ function renderMap() {
 
     // Fade: full opacity if < 5 min old, gone by 10 min
     const ageMins = (nowMs - new Date(c.last_seen_at).getTime()) / 60000;
-    if (ageMins > 10) return;
-    const fadeOpacity = ageMins < 5 ? 1.0 : 1.0 - ((ageMins - 5) / 5);
+    const fadeMins = (_settings && _settings.connectionFadeMinutes) || 5;
+    if (ageMins > fadeMins * 2) return;
+    const fadeOpacity = ageMins < fadeMins ? 1.0 : 1.0 - ((ageMins - fadeMins) / fadeMins);
 
     const color   = c.hearing_layer === 'direct' ? '#00e57a' : (c.hearing_layer === 'reported' ? '#f0a020' : '#8060c0');
     const weight  = Math.max(1, Math.round(c.weight * 3));
@@ -1972,6 +2183,7 @@ async function pollAll() {
   await fetchGroups();
 }
 
+loadSettings();
 pollAll();
 setInterval(fetchStatus,      POLL_STATUS_MS);
 setInterval(fetchStations,    POLL_STATIONS_MS);

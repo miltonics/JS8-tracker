@@ -49,7 +49,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.4.3"
+BUILD_TAG = "js8-tracker-0.4.4"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
@@ -2240,6 +2240,21 @@ def api_station_detail(
         "events": events,
         "connections": connections,
         "snr_history": list(reversed(snr_history)),
+    }
+
+
+@app.get("/api/config")
+def api_config_get() -> dict:
+    """Return current user-editable config."""
+    return {
+        "mycall": MYCALL,
+        "udp_port": UDP_PORT,
+        "http_port": HTTP_PORT,
+        "js8call_api_port": JS8CALL_API_PORT,
+        "fcc_db_available": FCC_DB_PATH.exists(),
+        "db_prune_events_days": DB_PRUNE_EVENTS_DAYS,
+        "db_prune_stations_days": DB_PRUNE_STATIONS_DAYS,
+        "db_prune_interval_hours": DB_PRUNE_INTERVAL_HOURS,
     }
 
 
