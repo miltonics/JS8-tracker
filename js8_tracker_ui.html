@@ -2005,11 +2005,9 @@ function selectGroup(name) {
 }
 
 // ── MAP ───────────────────────────────────────────────────
-// Marker cache — keyed by callsign, avoids clear+redraw flicker
-const _markerCache = {};
-
 function renderMap() {
-  lineLayer.clearLayers();  // markers handled by cache
+  markerLayer.clearLayers();
+  lineLayer.clearLayers();
 
   // Own station pin — suppress during replay
   if (_myCall && _myGrid && !_replayNow) renderMyStation(_myCall, _myGrid);
@@ -2071,18 +2069,9 @@ function renderMap() {
     const labelIcon = L.divIcon({ className: '', html: labelHtml, iconSize: [120, 14], iconAnchor: [0, 7] });
 
     // Use cached markers to avoid flicker during replay
-    if (_markerCache[s.callsign]) {
-      // Update existing marker in place — no remove/add needed
-      _markerCache[s.callsign].m.setLatLng(ll).setIcon(icon);
-      _markerCache[s.callsign].l.setLatLng(ll).setIcon(labelIcon);
-    } else {
-      // Create new marker and add to layer
-      const marker = L.marker(ll, { icon }).addTo(markerLayer);
-      marker.on('click', () => selectStation(s.callsign));
-      const lbl = L.marker(ll, { icon: labelIcon, interactive: false }).addTo(markerLayer);
-      _markerCache[s.callsign] = { m: marker, l: lbl };
-    }
-    _markerCache[s.callsign]._seen = true;
+    const marker = L.marker(ll, { icon }).addTo(markerLayer);
+    marker.on('click', () => selectStation(s.callsign));
+    L.marker(ll, { icon: labelIcon, interactive: false }).addTo(markerLayer);
 
     marker.bindPopup(`
       <div class="popup-call">${s.callsign}</div>
@@ -2093,17 +2082,6 @@ function renderMap() {
       <div class="popup-row"><span class="popup-label">Heard</span><span class="popup-value">${fmtAge(s.last_heard_at)}</span></div>
       <div class="popup-row"><span class="popup-label">Events</span><span class="popup-value">${s.event_count}</span></div>
     `);
-  });
-
-  // Remove markers for stations no longer in visible set
-  Object.keys(_markerCache).forEach(call => {
-    if (!_markerCache[call]._seen) {
-      try { markerLayer.removeLayer(_markerCache[call].m); } catch(e) {}
-      try { markerLayer.removeLayer(_markerCache[call].l); } catch(e) {}
-      delete _markerCache[call];
-    } else {
-      _markerCache[call]._seen = false;
-    }
   });
 
   // Determine highlighted connection for selected event
