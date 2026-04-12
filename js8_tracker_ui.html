@@ -1745,7 +1745,12 @@ async function fetchStations() {
   } catch(e) {}
 }
 
+let _stationsThrottleTimer = null;
 function renderStations() {
+  if (_replayNow) {
+    if (_stationsThrottleTimer) return;
+    _stationsThrottleTimer = setTimeout(() => { _stationsThrottleTimer = null; }, 250);
+  }
   const list = document.getElementById('station-list');
 
   const filtered = _allStations.filter(s =>
@@ -1829,7 +1834,7 @@ function selectEvent(src, dst) {
   blinkingCalls = new Set([src, dst].filter(Boolean));
   renderStations();
   renderMap();
-  setTimeout(() => { blinkingCalls.clear(); renderMap(); }, 750);
+  if (!_replayNow) setTimeout(() => { blinkingCalls.clear(); renderMap(); }, 750);
 
   // Fly map to fit both stations
   const points = [];
@@ -2000,6 +2005,9 @@ function selectGroup(name) {
 }
 
 // ── MAP ───────────────────────────────────────────────────
+// Marker cache — keyed by callsign, avoids clear+redraw flicker
+const _markerCache = {};
+
 function renderMap() {
   markerLayer.clearLayers();
   lineLayer.clearLayers();
@@ -2058,29 +2066,28 @@ function renderMap() {
       iconAnchor: [dotSize/2, dotSize/2],
     });
 
-    const marker = L.marker(ll, { icon }).addTo(markerLayer);
+    // Build label icon
+    const showLabel = isSelected || isEventSel || map.getZoom() >= 6;
+    const labelHtml = showLabel ? `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:${color};white-space:nowrap;text-shadow:0 0 4px #000,0 0 4px #000;pointer-events:none;margin-left:8px;margin-top:-5px;">${s.callsign}</div>` : '';
+    const labelIcon = L.divIcon({ className: '', html: labelHtml, iconSize: [120, 14], iconAnchor: [0, 7] });
 
-    // Label for selected, event-selected, or large enough zoom
-    if (isSelected || isEventSel || map.getZoom() >= 6) {
-      const label = L.divIcon({
-        className: '',
-        html: `<div style="
-          font-family:'Share Tech Mono',monospace;
-          font-size:10px;
-          color:${color};
-          white-space:nowrap;
-          text-shadow:0 0 4px #000,0 0 4px #000;
-          pointer-events:none;
-          margin-left:8px;
-          margin-top:-5px;
-        ">${s.callsign}${s.best_grid ? ' '+s.best_grid : ''}</div>`,
-        iconSize: [120, 14],
-        iconAnchor: [0, 7],
-      });
-      L.marker(ll, { icon: label, interactive: false }).addTo(markerLayer);
+    // Use cached markers to avoid flicker during replay
+    if (_markerCache[s.callsign]) {
+      _markerCache[s.callsign].m.setIcon(icon);
+      _markerCache[s.callsign].m.setLatLng(ll);
+      _markerCache[s.callsign].l.setIcon(labelIcon);
+      _markerCache[s.callsign].l.setLatLng(ll);
+      if (!markerLayer.hasLayer(_markerCache[s.callsign].m)) {
+        _markerCache[s.callsign].m.addTo(markerLayer);
+        _markerCache[s.callsign].l.addTo(markerLayer);
+      }
+    } else {
+      const marker = L.marker(ll, { icon }).addTo(markerLayer);
+      marker.on('click', () => selectStation(s.callsign));
+      const lbl = L.marker(ll, { icon: labelIcon, interactive: false }).addTo(markerLayer);
+      _markerCache[s.callsign] = { m: marker, l: lbl };
     }
-
-    marker.on('click', () => selectStation(s.callsign));
+    _markerCache[s.callsign]._seen = true;
 
     marker.bindPopup(`
       <div class="popup-call">${s.callsign}</div>
@@ -2091,6 +2098,17 @@ function renderMap() {
       <div class="popup-row"><span class="popup-label">Heard</span><span class="popup-value">${fmtAge(s.last_heard_at)}</span></div>
       <div class="popup-row"><span class="popup-label">Events</span><span class="popup-value">${s.event_count}</span></div>
     `);
+  });
+
+  // Remove markers for stations no longer in visible set
+  Object.keys(_markerCache).forEach(call => {
+    if (!_markerCache[call]._seen) {
+      try { markerLayer.removeLayer(_markerCache[call].m); } catch(e) {}
+      try { markerLayer.removeLayer(_markerCache[call].l); } catch(e) {}
+      delete _markerCache[call];
+    } else {
+      _markerCache[call]._seen = false;
+    }
   });
 
   // Determine highlighted connection for selected event
@@ -2880,15 +2898,15 @@ async function pollAll() {
 loadSettings();
 initDragHandles();
 pollAll();
-setInterval(fetchStatus,      POLL_STATUS_MS);
-setInterval(fetchStations,    POLL_STATIONS_MS);
-setInterval(fetchEvents,      POLL_EVENTS_MS);
-setInterval(fetchConnections, POLL_CONNS_MS);
-setInterval(fetchGroups,      POLL_CONNS_MS);
+setInterval(() => { if (!_replayNow) fetchStatus();      }, POLL_STATUS_MS);
+setInterval(() => { if (!_replayNow) fetchStations();    }, POLL_STATIONS_MS);
+setInterval(() => { if (!_replayNow) fetchEvents();      }, POLL_EVENTS_MS);
+setInterval(() => { if (!_replayNow) fetchConnections(); }, POLL_CONNS_MS);
+setInterval(() => { if (!_replayNow) fetchGroups();      }, POLL_CONNS_MS);
 
 // Refresh ages on station list every 30s without a full API call
 setInterval(() => {
-  if (_allStations.length) renderStations();
+  if (!_replayNow && _allStations.length) renderStations();
 }, 30000);
 
 // Map re-renders on zoom to show/hide labels
