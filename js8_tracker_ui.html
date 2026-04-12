@@ -2009,8 +2009,7 @@ function selectGroup(name) {
 const _markerCache = {};
 
 function renderMap() {
-  markerLayer.clearLayers();
-  lineLayer.clearLayers();
+  lineLayer.clearLayers();  // markers handled by cache
 
   // Own station pin — suppress during replay
   if (_myCall && _myGrid && !_replayNow) renderMyStation(_myCall, _myGrid);
@@ -2073,15 +2072,11 @@ function renderMap() {
 
     // Use cached markers to avoid flicker during replay
     if (_markerCache[s.callsign]) {
-      _markerCache[s.callsign].m.setIcon(icon);
-      _markerCache[s.callsign].m.setLatLng(ll);
-      _markerCache[s.callsign].l.setIcon(labelIcon);
-      _markerCache[s.callsign].l.setLatLng(ll);
-      if (!markerLayer.hasLayer(_markerCache[s.callsign].m)) {
-        _markerCache[s.callsign].m.addTo(markerLayer);
-        _markerCache[s.callsign].l.addTo(markerLayer);
-      }
+      // Update existing marker in place — no remove/add needed
+      _markerCache[s.callsign].m.setLatLng(ll).setIcon(icon);
+      _markerCache[s.callsign].l.setLatLng(ll).setIcon(labelIcon);
     } else {
+      // Create new marker and add to layer
       const marker = L.marker(ll, { icon }).addTo(markerLayer);
       marker.on('click', () => selectStation(s.callsign));
       const lbl = L.marker(ll, { icon: labelIcon, interactive: false }).addTo(markerLayer);
