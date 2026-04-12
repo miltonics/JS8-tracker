@@ -1182,8 +1182,11 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
     <option value="10">10×</option>
     <option value="30">30×</option>
     <option value="60">60×</option>
-    <option value="120" selected>120×</option>
+    <option value="120">120×</option>
     <option value="300">300×</option>
+    <option value="600" selected>600×</option>
+    <option value="1200">1200×</option>
+    <option value="3000">3000×</option>
   </select>
   <button class="replay-btn" onclick="replayStop()" title="Return to live" style="width:auto;padding:0 8px;font-size:11px;font-family:var(--sans);font-weight:700;letter-spacing:.08em;">Live</button>
 </div>
@@ -2001,8 +2004,8 @@ function renderMap() {
   markerLayer.clearLayers();
   lineLayer.clearLayers();
 
-  // Always re-pin own station after layer clear
-  if (_myCall && _myGrid) renderMyStation(_myCall, _myGrid);
+  // Own station pin — suppress during replay
+  if (_myCall && _myGrid && !_replayNow) renderMyStation(_myCall, _myGrid);
 
   // Stations visible after event-type filter
   const filteredCalls = getFilteredCalls();
@@ -2095,7 +2098,7 @@ function renderMap() {
   const hlDst = selectedEvent ? selectedEvent.dst : null;
 
   // Draw directional animated connection lines
-  const nowMs = Date.now();
+  const nowMs = _nowMs();
   connections.forEach(c => {
     if (!activeLayers.has(c.hearing_layer)) return;
     if (c.confidence === 'low') return;
@@ -2117,8 +2120,8 @@ function renderMap() {
     if (!a || targets.length === 0) return;
 
     // Fade: full opacity if < 5 min old, gone by 10 min
-    const ageMins = (nowMs - new Date(c.last_seen_at).getTime()) / 60000;
-    const fadeMins = (_settings && _settings.connectionFadeMinutes) || 5;
+    const ageMins = (_nowMs() - new Date(c.last_seen_at).getTime()) / 60000;
+    const fadeMins = _replayNow ? 30 : ((_settings && _settings.connectionFadeMinutes) || 5);
     if (ageMins > fadeMins * 2) return;
     const fadeOpacity = ageMins < fadeMins ? 1.0 : 1.0 - ((ageMins - fadeMins) / fadeMins);
 
@@ -2754,13 +2757,7 @@ function replayPlayPause() {
 }
 
 function replayGoStart() {
-  _replayBucket = 0;
-  _replayStationState = {};
-  _allStations = [];
-  connections  = [];
-  document.getElementById('event-list').innerHTML = '';
-  _replayNow = new Date(_replayData.start);
-  _replayUpdateUI();
+  _replayJumpTo(0);
 }
 
 function replaySetSpeed(val) {
@@ -2778,25 +2775,31 @@ function replaySeek(e) {
   const rect = tl.getBoundingClientRect();
   const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   const targetBucket = Math.floor(pct * _replayData.n_buckets);
+  _replayJumpTo(targetBucket);
+}
 
-  if (targetBucket < _replayBucket) {
-    // Seeking backward — rebuild state from scratch
-    _replayStationState = {};
-    _allStations = [];
-    connections  = [];
-    document.getElementById('event-list').innerHTML = '';
-    _replayBucket = 0;
-    _replayNow = new Date(_replayData.start);
+function _replayJumpTo(targetBucket) {
+  if (!_replayData) return;
+  targetBucket = Math.max(0, Math.min(_replayData.n_buckets - 1, targetBucket));
+
+  // Always rebuild from scratch — fast enough for typical datasets
+  _replayStationState = {};
+  _allStations = [];
+  connections  = [];
+  document.getElementById('event-list').innerHTML = '';
+  _replayBucket = 0;
+  _replayNow = new Date(_replayData.start);
+
+  // Fast-forward silently to target (no UI updates, no event stream)
+  for (let i = 1; i <= targetBucket; i++) {
+    _replayApplyBucketToState(_replayData.buckets[i] || []);
   }
-  // Step forward to target
-  while (_replayBucket < targetBucket) {
-    _replayBucket++;
-    _replayNow = new Date(new Date(_replayData.start).getTime() +
-      _replayBucket * _replayData.bucket_seconds * 1000);
-    _replayApplyBucketToState(_replayData.buckets[_replayBucket] || []);
-  }
+  _replayBucket = targetBucket;
+  _replayNow = new Date(new Date(_replayData.start).getTime() +
+    targetBucket * _replayData.bucket_seconds * 1000);
+
   _replayBuildConnections();
-  _replayUpdateUI();
+  _replayUpdateUI([]);  // update map/timeline but don't inject events
 }
 
 function _replayStep() {
