@@ -542,8 +542,45 @@ html, body {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 6px;
+  margin-top: 4px;
 }
+.gd-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-top: 4px;
+}
+.gd-tab {
+  font-size: 10px;
+  padding: 3px 10px;
+  cursor: pointer;
+  color: var(--text-mute);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all 0.15s;
+  font-family: var(--sans);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.gd-tab:hover { color: var(--text); }
+.gd-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+.gd-tab-content { display: none; }
+.gd-tab-content.active { display: block; }
+.gd-member-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 40px 50px;
+  gap: 4px;
+  font-size: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+.gd-member-row:last-child { border-bottom: none; }
+.gd-member-call { color: var(--amber); font-family: var(--mono); cursor: pointer; }
+.gd-member-call:hover { color: var(--cyan); }
+.gd-member-grid { color: var(--cyan); font-family: var(--mono); font-size: 9px; }
+.gd-member-snr  { color: var(--text-dim); text-align: right; }
+.gd-member-age  { color: var(--text-mute); font-size: 9px; text-align: right; }
 .group-member-chip {
   font-size: 10px;
   padding: 1px 6px;
@@ -887,6 +924,149 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
   cursor: col-resize;
 }
 
+/* ── REPLAY MODE ────────────────────────────────────────── */
+#replay-bar {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 52px;
+  background: #1a1000;
+  border-top: 2px solid var(--amber);
+  z-index: 500;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+}
+#replay-bar.visible { display: flex; }
+
+body.replay-mode #main { padding-bottom: 56px; }
+body.replay-mode #header { border-bottom-color: var(--amber); }
+
+#replay-mode-badge {
+  display: none;
+  font-size: 10px;
+  font-family: var(--sans);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--amber);
+  background: #2a1800;
+  border: 1px solid var(--amber);
+  border-radius: 2px;
+  padding: 2px 8px;
+  margin-left: 8px;
+}
+body.replay-mode #replay-mode-badge { display: inline-block; }
+
+.replay-btn {
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--amber);
+  background: none;
+  border: 1px solid var(--amber-dim);
+  border-radius: 2px;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.replay-btn:hover { background: var(--amber-dim); }
+.replay-btn:disabled { opacity: 0.3; cursor: default; }
+
+#replay-timeline {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  position: relative;
+  cursor: pointer;
+}
+#replay-progress {
+  height: 100%;
+  background: var(--amber);
+  border-radius: 3px;
+  transition: width 0.1s linear;
+  pointer-events: none;
+}
+#replay-thumb {
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  width: 12px; height: 12px;
+  background: var(--amber);
+  border-radius: 50%;
+  margin-left: -6px;
+  pointer-events: none;
+}
+#replay-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  min-width: 140px;
+  white-space: nowrap;
+}
+#replay-speed {
+  background: var(--bg3);
+  color: var(--amber);
+  border: 1px solid var(--amber-dim);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+/* ── REPLAY SETUP PANEL ──────────────────────────────────── */
+#replay-setup {
+  display: none;
+  position: fixed;
+  bottom: 56px; left: 50%; transform: translateX(-50%);
+  width: 420px;
+  background: var(--bg2);
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  z-index: 501;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.8);
+}
+#replay-setup.visible { display: block; }
+.replay-setup-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--sans); font-weight: 700;
+  font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--amber);
+}
+.replay-setup-body { padding: 12px; }
+.replay-preset-row {
+  display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.replay-preset {
+  font-size: 10px; padding: 3px 10px;
+  border: 1px solid var(--border2); border-radius: 2px;
+  background: var(--bg3); color: var(--text-dim);
+  cursor: pointer; transition: all 0.15s;
+}
+.replay-preset:hover, .replay-preset.active {
+  border-color: var(--amber); color: var(--amber); background: #1a1000;
+}
+.replay-range-row {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 10px; color: var(--text-dim); margin-bottom: 10px;
+}
+.replay-dt-input {
+  background: var(--bg3); border: 1px solid var(--border2);
+  color: var(--text); font-family: var(--mono); font-size: 10px;
+  padding: 3px 6px; border-radius: 2px; flex: 1;
+}
+.replay-dt-input:focus { outline: none; border-color: var(--amber); }
+.replay-start-btn {
+  width: 100%; padding: 6px;
+  background: var(--amber-dim); border: 1px solid var(--amber);
+  color: var(--amber); font-family: var(--sans); font-weight: 700;
+  font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  border-radius: 2px; cursor: pointer; transition: all 0.15s;
+}
+.replay-start-btn:hover { background: var(--amber); color: #000; }
+
 /* ── RESPONSIVE ──────────────────────────────────────── */
 @media (max-width: 900px) {
   #main { grid-template-columns: 1fr; grid-template-rows: auto 300px auto; overflow-y: auto; }
@@ -900,8 +1080,8 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
 <div id="header">
 
   <!-- ROW 1: title + stats + controls -->
-  <div id="header-row1">
-    <div id="logo">JS8<span>-</span>tracker <span id="version-tag" style="font-size:10px;color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span></div>
+  <div id="header-row1" style="position:relative;">
+    <div id="logo">JS8<span>-</span>tracker <span id="version-tag" style="font-size:10px;color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span><span id="replay-mode-badge">⏵ REPLAY</span></div>
 
     <div id="status-bar">
       <div class="stat-block">
@@ -938,13 +1118,16 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
       <div class="pill layer-inferred"        data-layer="inferred" onclick="toggleLayer(this)">Inferred</div>
     </div>
 
-    <!-- Window slider -->
-    <div style="display:flex;gap:8px;align-items:center;">
+    <!-- Window control -->
+    <div style="display:flex;gap:6px;align-items:center;">
       <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;">Window</span>
-      <input type="range" id="window-slider" min="1" max="1440" value="30" step="1"
-        style="width:80px;accent-color:var(--cyan);cursor:pointer;vertical-align:middle;"
-        oninput="onWindowSlider(this)">
-      <span id="window-label" style="font-size:11px;color:var(--cyan);min-width:32px;font-family:var(--mono);">30m</span>
+      <select id="window-select" onchange="onWindowSelect(this)"
+        style="background:var(--bg3);color:var(--cyan);border:1px solid var(--border2);border-radius:2px;font-family:var(--mono);font-size:11px;padding:2px 4px;cursor:pointer;">
+        <option value="360">6h</option>
+        <option value="720">12h</option>
+        <option value="1440">24h</option>
+        <option value="2880">48h</option>
+      </select>
       <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;">
         <input type="checkbox" id="window-all" onchange="onWindowAll(this)" style="accent-color:var(--cyan);cursor:pointer;">All
       </label>
@@ -978,7 +1161,53 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
     <div class="ptoggle active" id="pt-map"      onclick="togglePanel('map')">Map</div>
     <div class="ptoggle active" id="pt-events"   onclick="togglePanel('events')">Events</div>
     <div class="ptoggle-sep"></div>
+    <div class="ptoggle" id="pt-replay" onclick="openReplaySetup()" title="Replay historical traffic">Replay</div>
+    <div class="ptoggle-sep"></div>
     <div class="pill" id="compact-btn" onclick="toggleCompact()" title="Compact mode" style="font-size:11px;">Compact</div>
+  </div>
+</div>
+
+<!-- ── REPLAY BAR ── -->
+<div id="replay-bar">
+  <button class="replay-btn" id="rb-start"  onclick="replayGoStart()" title="Go to start">⏮</button>
+  <button class="replay-btn" id="rb-play"   onclick="replayPlayPause()" title="Play/Pause">⏵</button>
+  <button class="replay-btn" id="rb-stop"   onclick="replayStop()" title="Stop replay">⏹</button>
+  <div id="replay-timeline" onclick="replaySeek(event)">
+    <div id="replay-progress" style="width:0%"></div>
+    <div id="replay-thumb" style="left:0%"></div>
+  </div>
+  <div id="replay-time">—</div>
+  <select id="replay-speed" onchange="replaySetSpeed(this.value)">
+    <option value="10">10×</option>
+    <option value="30">30×</option>
+    <option value="60" selected>60×</option>
+    <option value="120">120×</option>
+    <option value="300">300×</option>
+  </select>
+  <button class="replay-btn" onclick="replayStop()" title="Return to live" style="width:auto;padding:0 8px;font-size:11px;font-family:var(--sans);font-weight:700;letter-spacing:.08em;">Live</button>
+</div>
+
+<!-- ── REPLAY SETUP PANEL ── -->
+<div id="replay-setup">
+  <div class="replay-setup-header">
+    Replay
+    <span style="cursor:pointer;color:var(--text-mute);" onclick="closeReplaySetup()">✕</span>
+  </div>
+  <div class="replay-setup-body">
+    <div class="replay-preset-row">
+      <div class="replay-preset" onclick="replayPreset(8)">Last 8h</div>
+      <div class="replay-preset" onclick="replayPreset(12)">Last 12h</div>
+      <div class="replay-preset" onclick="replayPreset(24)">Last 24h</div>
+      <div class="replay-preset" onclick="replayPreset(48)">Last 48h</div>
+      <div class="replay-preset" id="replay-preset-yesterday" onclick="replayPresetYesterday()">Yesterday</div>
+    </div>
+    <div class="replay-range-row">
+      <span>From</span>
+      <input type="datetime-local" class="replay-dt-input" id="replay-from">
+      <span>To</span>
+      <input type="datetime-local" class="replay-dt-input" id="replay-to">
+    </div>
+    <button class="replay-start-btn" onclick="startReplay()">▶ Start Replay</button>
   </div>
 </div>
 
@@ -1039,7 +1268,16 @@ body.compact #conn-strip   { min-height: 28px; max-height: 28px; padding: 3px 8p
     <div id="group-detail">
       <div class="group-detail-name"><span id="gd-name">—</span><span class="group-detail-close" onclick="selectGroup(null)">✕ close</span></div>
       <div class="group-detail-meta" id="gd-meta"></div>
-      <div class="group-member-list" id="gd-members"></div>
+      <div class="gd-tabs">
+        <div class="gd-tab active" onclick="switchGdTab('chips',this)">Members</div>
+        <div class="gd-tab" onclick="switchGdTab('table',this)">Detail</div>
+      </div>
+      <div class="gd-tab-content active" id="gd-tab-chips">
+        <div class="group-member-list" id="gd-members"></div>
+      </div>
+      <div class="gd-tab-content" id="gd-tab-table">
+        <div id="gd-member-table"></div>
+      </div>
     </div>
     <div class="panel-body" id="station-list">
       <div class="empty-state">Waiting for stations…</div>
@@ -1218,7 +1456,7 @@ let MY_CALL            = '';  // loaded from /api/status
 
 // ── STATE ─────────────────────────────────────────────────
 let activeLayers    = new Set(['direct', 'reported']);
-let activeWindowMin = 30;
+let activeWindowMin = 360;  // default 6h
 let eventTypeFilter = 'all';
 let lastEventId     = null;
 let seenEventIds    = new Set();
@@ -1404,34 +1642,25 @@ function toggleLayer(el) {
   renderMap();
 }
 
-function fmtWindowLabel(mins) {
-  if (mins < 60) return mins + 'm';
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m ? h + 'h' + m + 'm' : h + 'h';
-}
-
 function applyWindow(mins) {
   activeWindowMin = mins;
   fetchStations();
+  fetchEvents();
   fetchConnections();
+  fetchGroups();
 }
 
-function onWindowSlider(el) {
-  const mins = parseInt(el.value);
-  document.getElementById('window-label').textContent = fmtWindowLabel(mins);
+function onWindowSelect(el) {
   document.getElementById('window-all').checked = false;
-  applyWindow(mins);
+  applyWindow(parseInt(el.value));
 }
 
 function onWindowAll(el) {
   if (el.checked) {
-    document.getElementById('window-label').textContent = 'All';
     applyWindow(0);
   } else {
-    const mins = parseInt(document.getElementById('window-slider').value);
-    document.getElementById('window-label').textContent = fmtWindowLabel(mins);
-    applyWindow(mins);
+    const sel = document.getElementById('window-select');
+    applyWindow(parseInt(sel ? sel.value : 360));
   }
 }
 
@@ -1678,9 +1907,35 @@ function renderGroupDetail(g) {
   document.getElementById('gd-name').textContent = g.name;
   document.getElementById('gd-meta').textContent =
     `${g.members.length} active · ${g.event_count} events · last: ${fmtAge(g.last_activity_at)}`;
+
+  // Tab 1: member chips
   document.getElementById('gd-members').innerHTML = g.members.map(call =>
     `<span class="group-member-chip" onclick="selectStation('${call}')">${call}</span>`
   ).join('');
+
+  // Tab 2: member detail table with grid/SNR/age from station data
+  const rows = g.members.map(call => {
+    const s = _allStations.find(x => x.callsign === call);
+    const grid = s && s.best_grid ? s.best_grid : '—';
+    const snr  = s && s.last_snr !== null && s.last_snr !== undefined
+      ? (s.last_snr > 0 ? '+' : '') + s.last_snr + 'dB' : '—';
+    const age  = s ? fmtAge(s.last_heard_at) : '—';
+    return `<div class="gd-member-row">
+      <span class="gd-member-call" onclick="selectStation('${call}')">${call}</span>
+      <span class="gd-member-grid">${grid}</span>
+      <span class="gd-member-snr">${snr}</span>
+      <span class="gd-member-age">${age}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('gd-member-table').innerHTML = rows ||
+    '<div style="color:var(--text-mute);font-size:10px;padding:6px 0;">No member data</div>';
+}
+
+function switchGdTab(tab, el) {
+  document.querySelectorAll('.gd-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.gd-tab-content').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('gd-tab-' + tab).classList.add('active');
 }
 
 let _savedMapView = null;  // {center, zoom} saved before group selection
@@ -2260,6 +2515,219 @@ function setupDragHandle(handleId, panelId, side, minW, maxW) {
     document.addEventListener('mouseup', onUp);
     e.preventDefault();
   });
+}
+
+// ── REPLAY ENGINE ────────────────────────────────────────
+let _replayData     = null;   // loaded bucket data
+let _replayBucket   = 0;      // current bucket index
+let _replayTimer    = null;   // setInterval handle
+let _replayPlaying  = false;
+let _replaySpeed    = 60;     // multiplier
+
+function openReplaySetup() {
+  // Pre-fill datetime inputs with a sensible default (last 8h)
+  const now = new Date();
+  const from = new Date(now - 8 * 3600 * 1000);
+  document.getElementById('replay-from').value = toLocalDTInput(from);
+  document.getElementById('replay-to').value   = toLocalDTInput(now);
+  document.getElementById('replay-setup').classList.add('visible');
+}
+
+function closeReplaySetup() {
+  document.getElementById('replay-setup').classList.remove('visible');
+}
+
+function toLocalDTInput(d) {
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function replayPreset(hours) {
+  const now = new Date();
+  const from = new Date(now - hours * 3600 * 1000);
+  document.getElementById('replay-from').value = toLocalDTInput(from);
+  document.getElementById('replay-to').value   = toLocalDTInput(now);
+  document.querySelectorAll('.replay-preset').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function replayPresetYesterday() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() - 1);
+  start.setHours(0,0,0,0);
+  const end = new Date(start);
+  end.setHours(23,59,59,0);
+  document.getElementById('replay-from').value = toLocalDTInput(start);
+  document.getElementById('replay-to').value   = toLocalDTInput(end);
+  document.querySelectorAll('.replay-preset').forEach(p => p.classList.remove('active'));
+  document.getElementById('replay-preset-yesterday').classList.add('active');
+}
+
+async function startReplay() {
+  const fromVal = document.getElementById('replay-from').value;
+  const toVal   = document.getElementById('replay-to').value;
+  if (!fromVal || !toVal) return;
+
+  const fromISO = new Date(fromVal).toISOString();
+  const toISO   = new Date(toVal).toISOString();
+
+  closeReplaySetup();
+  document.getElementById('replay-time').textContent = 'Loading…';
+  document.getElementById('replay-bar').classList.add('visible');
+
+  try {
+    const bucketSecs = 30;  // 30s buckets — smooth at 60x plays 1s per real 30s
+    const url = `${API}/api/replay/buckets?start=${encodeURIComponent(fromISO)}&end=${encodeURIComponent(toISO)}&bucket_seconds=${bucketSecs}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('fetch failed');
+    _replayData = await r.json();
+  } catch(e) {
+    document.getElementById('replay-time').textContent = 'Load failed';
+    return;
+  }
+
+  _replayBucket = 0;
+  _replaySpeed = parseInt(document.getElementById('replay-speed').value);
+
+  // Enter replay mode — suspend live polling
+  document.body.classList.add('replay-mode');
+  clearInterval(_replayTimer);
+  _replayTimer = null;
+  _replayPlaying = false;
+
+  // Show initial state (all stations known at start)
+  _replayRenderStations(_replayData.stations);
+  _replayUpdateUI();
+  replayPlayPause();  // auto-play
+}
+
+function replayStop() {
+  // Exit replay — restore live mode
+  if (_replayTimer) clearInterval(_replayTimer);
+  _replayTimer = null;
+  _replayPlaying = false;
+  _replayData = null;
+  document.body.classList.remove('replay-mode');
+  document.getElementById('replay-bar').classList.remove('visible');
+  document.getElementById('rb-play').textContent = '⏵';
+  // Restore live data
+  pollAll();
+}
+
+function replayPlayPause() {
+  if (!_replayData) return;
+  if (_replayPlaying) {
+    clearInterval(_replayTimer);
+    _replayTimer = null;
+    _replayPlaying = false;
+    document.getElementById('rb-play').textContent = '⏵';
+  } else {
+    _replayPlaying = true;
+    document.getElementById('rb-play').textContent = '⏸';
+    // Interval: bucket_seconds / speed * 1000ms
+    const intervalMs = (_replayData.bucket_seconds / _replaySpeed) * 1000;
+    _replayTimer = setInterval(_replayStep, Math.max(100, intervalMs));
+  }
+}
+
+function replayGoStart() {
+  _replayBucket = 0;
+  _replayUpdateUI();
+}
+
+function replaySetSpeed(val) {
+  _replaySpeed = parseInt(val);
+  if (_replayPlaying) {
+    // Restart timer with new speed
+    clearInterval(_replayTimer);
+    const intervalMs = (_replayData.bucket_seconds / _replaySpeed) * 1000;
+    _replayTimer = setInterval(_replayStep, Math.max(100, intervalMs));
+  }
+}
+
+function replaySeek(e) {
+  if (!_replayData) return;
+  const tl = document.getElementById('replay-timeline');
+  const rect = tl.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  _replayBucket = Math.floor(pct * _replayData.n_buckets);
+  _replayUpdateUI();
+}
+
+function _replayStep() {
+  if (!_replayData) return;
+  if (_replayBucket >= _replayData.n_buckets - 1) {
+    // End of replay
+    clearInterval(_replayTimer);
+    _replayTimer = null;
+    _replayPlaying = false;
+    document.getElementById('rb-play').textContent = '⏵';
+    return;
+  }
+  _replayBucket++;
+  _replayUpdateUI();
+}
+
+function _replayUpdateUI() {
+  if (!_replayData) return;
+  const b = _replayData.buckets[_replayBucket] || [];
+  const pct = _replayData.n_buckets > 1
+    ? (_replayBucket / (_replayData.n_buckets - 1)) * 100 : 0;
+
+  // Timeline
+  document.getElementById('replay-progress').style.width = pct + '%';
+  document.getElementById('replay-thumb').style.left = pct + '%';
+
+  // Time label
+  const t_start = new Date(_replayData.start);
+  const t = new Date(t_start.getTime() + _replayBucket * _replayData.bucket_seconds * 1000);
+  document.getElementById('replay-time').textContent =
+    t.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' +
+    t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+
+  // Inject events into event stream
+  if (b.length > 0) {
+    const list = document.getElementById('event-list');
+    const newRows = b.map(e => {
+      const srcHtml = e.source_station
+        ? `<span class="event-call src">${e.source_station}</span> → ` : '';
+      const dstHtml = e.target_station
+        ? `<span class="event-call dst">${e.target_station}</span>` : '';
+      const grpHtml = e.group_name
+        ? ` <span class="event-call grp">${e.group_name}</span>` : '';
+      const snrHtml = e.snr !== null && e.snr !== undefined
+        ? `<span class="event-snr">${e.snr > 0?'+':''}${e.snr}dB</span>` : '';
+      return `<div class="event-row" style="border-left:2px solid var(--amber);">
+        <span class="event-time">${fmtTime(e.timestamp)}</span>
+        <span class="event-type-badge type-${e.event_type}">${fmtEventType(e.event_type)}</span>
+        ${srcHtml}${dstHtml}${grpHtml}${snrHtml}
+        <span class="event-raw">${e.raw_text}</span>
+      </div>`;
+    }).join('');
+    if (list) {
+      list.innerHTML = newRows + list.innerHTML;
+      // Trim to max events
+      const rows = list.querySelectorAll('.event-row');
+      if (rows.length > MAX_EVENTS) {
+        for (let i = MAX_EVENTS; i < rows.length; i++) rows[i].remove();
+      }
+    }
+  }
+}
+
+function _replayRenderStations(stations) {
+  // Temporarily replace _allStations for map rendering
+  _allStations = stations.map(s => ({
+    ...s,
+    active_groups: (s.active_groups || '').split(',').filter(Boolean),
+    grid_status: s.best_grid ? 'found' : 'pending',
+    event_count: 0,
+    is_local: false,
+    snr_min: null, snr_max: null,
+  }));
+  renderStations();
+  renderMap();
 }
 
 // ── POLL LOOPS ────────────────────────────────────────────

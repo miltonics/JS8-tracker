@@ -49,7 +49,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.4.4"
+BUILD_TAG = "js8-tracker-0.4.5"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
@@ -2241,6 +2241,88 @@ def api_station_detail(
         "connections": connections,
         "snr_history": list(reversed(snr_history)),
     }
+
+
+@app.get("/api/replay/buckets")
+def api_replay_buckets(
+    start: str = Query(...),   # ISO timestamp
+    end: str   = Query(...),   # ISO timestamp
+    bucket_seconds: int = Query(default=60, ge=10, le=3600),
+) -> dict:
+    """
+    Return events and station states sliced into time buckets for replay.
+    Each bucket contains events that occurred in that interval.
+    The frontend drives playback by stepping through buckets.
+    """
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    try:
+        cur = con.cursor()
+
+        # Get all events in range
+        cur.execute("""
+            SELECT id, timestamp, event_type, source_station, target_station,
+                   group_name, snr, hearing_layer, confidence, raw_text,
+                   dial_freq_hz, band
+            FROM events
+            WHERE timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+        """, (start, end))
+        events = [dict(r) for r in cur.fetchall()]
+
+        # Get all stations active during range (last state before end)
+        cur.execute("""
+            SELECT callsign, best_grid, best_grid_source, last_heard_at,
+                   last_snr, hearing_layer, confidence, active_groups,
+                   last_band, last_dial_freq_hz
+            FROM stations
+            WHERE last_heard_at >= ? AND last_heard_at <= ?
+        """, (start, end))
+        stations = [dict(r) for r in cur.fetchall()]
+
+    finally:
+        con.close()
+
+    # Slice events into buckets
+    from datetime import datetime, timezone
+    t_start = datetime.fromisoformat(start.replace('Z', '+00:00'))
+    t_end   = datetime.fromisoformat(end.replace('Z', '+00:00'))
+    total_secs = int((t_end - t_start).total_seconds())
+    n_buckets  = max(1, total_secs // bucket_seconds)
+
+    buckets: list[list] = [[] for _ in range(n_buckets)]
+    for evt in events:
+        t = datetime.fromisoformat(evt['timestamp'].replace('Z', '+00:00'))
+        idx = int((t - t_start).total_seconds() // bucket_seconds)
+        idx = max(0, min(n_buckets - 1, idx))
+        buckets[idx].append(evt)
+
+    return {
+        "start": start,
+        "end": end,
+        "bucket_seconds": bucket_seconds,
+        "n_buckets": n_buckets,
+        "total_events": len(events),
+        "stations": stations,
+        "buckets": buckets,
+    }
+
+
+@app.get("/api/replay/range")
+def api_replay_range() -> dict:
+    """Return the available replay range (earliest and latest event timestamps)."""
+    con = sqlite3.connect(DB_PATH)
+    try:
+        row = con.execute(
+            "SELECT MIN(timestamp), MAX(timestamp), COUNT(*) FROM events"
+        ).fetchone()
+        return {
+            "earliest": row[0],
+            "latest":   row[1],
+            "total_events": row[2],
+        }
+    finally:
+        con.close()
 
 
 @app.get("/api/config")
