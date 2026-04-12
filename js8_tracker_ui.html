@@ -1123,7 +1123,8 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
       <span style="font-size:9px;color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;">Window</span>
       <select id="window-select" onchange="onWindowSelect(this)"
         style="background:var(--bg3);color:var(--cyan);border:1px solid var(--border2);border-radius:2px;font-family:var(--mono);font-size:11px;padding:2px 4px;cursor:pointer;">
-        <option value="360">6h</option>
+        <option value="60">1h</option>
+      <option value="360">6h</option>
         <option value="720">12h</option>
         <option value="1440">24h</option>
         <option value="2880">48h</option>
@@ -1180,8 +1181,8 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
   <select id="replay-speed" onchange="replaySetSpeed(this.value)">
     <option value="10">10×</option>
     <option value="30">30×</option>
-    <option value="60" selected>60×</option>
-    <option value="120">120×</option>
+    <option value="60">60×</option>
+    <option value="120" selected>120×</option>
     <option value="300">300×</option>
   </select>
   <button class="replay-btn" onclick="replayStop()" title="Return to live" style="width:auto;padding:0 8px;font-size:11px;font-family:var(--sans);font-weight:700;letter-spacing:.08em;">Live</button>
@@ -1507,9 +1508,16 @@ function gridToLatLon(grid) {
 }
 
 // ── HELPERS ───────────────────────────────────────────────
+// _replayNow is null in live mode, set to replay cursor time during replay
+let _replayNow = null;
+
+function _nowMs() {
+  return _replayNow ? _replayNow.getTime() : Date.now();
+}
+
 function ageMinutes(ts) {
   if (!ts) return 9999;
-  return (Date.now() - new Date(ts).getTime()) / 60000;
+  return (_nowMs() - new Date(ts).getTime()) / 60000;
 }
 
 function ageClass(ts) {
@@ -2577,41 +2585,156 @@ async function startReplay() {
   document.getElementById('replay-bar').classList.add('visible');
 
   try {
-    const bucketSecs = 30;  // 30s buckets — smooth at 60x plays 1s per real 30s
+    // 30-second buckets give smooth animation at all speeds
+    const bucketSecs = 30;
     const url = `${API}/api/replay/buckets?start=${encodeURIComponent(fromISO)}&end=${encodeURIComponent(toISO)}&bucket_seconds=${bucketSecs}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error('fetch failed');
     _replayData = await r.json();
   } catch(e) {
     document.getElementById('replay-time').textContent = 'Load failed';
+    document.getElementById('replay-bar').classList.remove('visible');
     return;
   }
 
   _replayBucket = 0;
-  _replaySpeed = parseInt(document.getElementById('replay-speed').value);
+  _replaySpeed  = parseInt(document.getElementById('replay-speed').value);
+
+  // Build station state index from all events — keyed by callsign
+  // Stations start empty; appear as events are played back
+  _replayStationState = {};
 
   // Enter replay mode — suspend live polling
   document.body.classList.add('replay-mode');
+  _replayNow = new Date(_replayData.start);
   clearInterval(_replayTimer);
-  _replayTimer = null;
+  _replayTimer   = null;
   _replayPlaying = false;
 
-  // Show initial state (all stations known at start)
-  _replayRenderStations(_replayData.stations);
+  // Clear the map and event stream
+  _allStations = [];
+  connections  = [];
+  document.getElementById('event-list').innerHTML = '';
+  renderMap();
+  renderStations();
+
   _replayUpdateUI();
   replayPlayPause();  // auto-play
 }
 
+// Station state built incrementally during replay
+let _replayStationState = {};  // callsign -> station-like object
+
+function _replayApplyBucketToState(bucket) {
+  // Update station state from events in this bucket
+  bucket.forEach(evt => {
+    [evt.source_station, evt.target_station].filter(Boolean).forEach(call => {
+      if (!_replayStationState[call]) {
+        // First time we hear this station — look up from pre-loaded station list
+        const known = _replayData.stations.find(s => s.callsign === call);
+        _replayStationState[call] = known ? {
+          callsign: call,
+          best_grid: known.best_grid,
+          best_grid_source: known.best_grid_source || 'lookup',
+          last_heard_at: evt.timestamp,
+          last_snr: null,
+          snr_min: null, snr_max: null,
+          hearing_layer: evt.hearing_layer || 'reported',
+          confidence: evt.confidence || 'medium',
+          event_count: 1,
+          active_groups: (known.active_groups || '').split(',').filter(Boolean),
+          is_local: false,
+          grid_status: known.best_grid ? 'found' : 'pending',
+          last_band: known.last_band || evt.band || null,
+          last_dial_freq_hz: known.last_dial_freq_hz || evt.dial_freq_hz || null,
+        } : {
+          callsign: call,
+          best_grid: null, best_grid_source: 'unknown',
+          last_heard_at: evt.timestamp,
+          last_snr: null, snr_min: null, snr_max: null,
+          hearing_layer: evt.hearing_layer || 'reported',
+          confidence: evt.confidence || 'medium',
+          event_count: 1, active_groups: [], is_local: false,
+          grid_status: 'pending', last_band: evt.band || null,
+          last_dial_freq_hz: evt.dial_freq_hz || null,
+        };
+      } else {
+        // Update last heard and SNR
+        _replayStationState[call].last_heard_at = evt.timestamp;
+        _replayStationState[call].event_count++;
+        if (evt.snr !== null && evt.snr !== undefined &&
+            call === evt.target_station) {
+          _replayStationState[call].last_snr = evt.snr;
+          if (_replayStationState[call].snr_min === null) _replayStationState[call].snr_min = evt.snr;
+          if (_replayStationState[call].snr_max === null) _replayStationState[call].snr_max = evt.snr;
+          _replayStationState[call].snr_min = Math.min(_replayStationState[call].snr_min, evt.snr);
+          _replayStationState[call].snr_max = Math.max(_replayStationState[call].snr_max, evt.snr);
+        }
+        if (evt.hearing_layer === 'direct') {
+          _replayStationState[call].hearing_layer = 'direct';
+        }
+      }
+    });
+    // Track group membership
+    if (evt.group_name && evt.source_station && _replayStationState[evt.source_station]) {
+      const grps = _replayStationState[evt.source_station].active_groups;
+      if (!grps.includes(evt.group_name)) grps.push(evt.group_name);
+    }
+  });
+
+  // Update _allStations from current state
+  _allStations = Object.values(_replayStationState);
+}
+
+function _replayBuildConnections() {
+  // Build a simple connection list from events up to current bucket
+  // Only show connections from recent buckets (within 30 min of cursor)
+  const cutoff = new Date(_replayNow.getTime() - 30 * 60 * 1000).toISOString();
+  const connMap = {};
+  for (let i = Math.max(0, _replayBucket - 60); i <= _replayBucket; i++) {
+    (_replayData.buckets[i] || []).forEach(evt => {
+      if (!evt.source_station) return;
+      const target = evt.target_station || evt.group_name;
+      if (!target) return;
+      const key = `${evt.source_station}|${target}`;
+      if (!connMap[key] || connMap[key].last_seen_at < evt.timestamp) {
+        connMap[key] = {
+          source: evt.source_station,
+          target: target,
+          target_type: evt.group_name ? 'group' : 'station',
+          connection_type: 'reported_heard',
+          first_seen_at: connMap[key] ? connMap[key].first_seen_at : evt.timestamp,
+          last_seen_at: evt.timestamp,
+          count: (connMap[key] ? connMap[key].count : 0) + 1,
+          last_snr: evt.snr,
+          weight: Math.min(1.0, ((connMap[key] ? connMap[key].count : 0) + 1) * 0.1 + 0.5),
+          hearing_layer: evt.hearing_layer || 'reported',
+          confidence: evt.confidence || 'medium',
+        };
+      } else {
+        connMap[key].count++;
+        connMap[key].last_seen_at = evt.timestamp;
+        connMap[key].weight = Math.min(1.0, connMap[key].count * 0.1 + 0.5);
+        if (evt.snr !== null) connMap[key].last_snr = evt.snr;
+      }
+    });
+  }
+  connections = Object.values(connMap);
+}
+
 function replayStop() {
-  // Exit replay — restore live mode
   if (_replayTimer) clearInterval(_replayTimer);
-  _replayTimer = null;
+  _replayTimer   = null;
   _replayPlaying = false;
-  _replayData = null;
+  _replayData    = null;
+  _replayNow     = null;
+  _replayStationState = {};
   document.body.classList.remove('replay-mode');
   document.getElementById('replay-bar').classList.remove('visible');
   document.getElementById('rb-play').textContent = '⏵';
   // Restore live data
+  _allStations = [];
+  connections  = [];
   pollAll();
 }
 
@@ -2619,59 +2742,84 @@ function replayPlayPause() {
   if (!_replayData) return;
   if (_replayPlaying) {
     clearInterval(_replayTimer);
-    _replayTimer = null;
+    _replayTimer   = null;
     _replayPlaying = false;
     document.getElementById('rb-play').textContent = '⏵';
   } else {
     _replayPlaying = true;
     document.getElementById('rb-play').textContent = '⏸';
-    // Interval: bucket_seconds / speed * 1000ms
-    const intervalMs = (_replayData.bucket_seconds / _replaySpeed) * 1000;
-    _replayTimer = setInterval(_replayStep, Math.max(100, intervalMs));
+    const intervalMs = Math.max(50, (_replayData.bucket_seconds / _replaySpeed) * 1000);
+    _replayTimer = setInterval(_replayStep, intervalMs);
   }
 }
 
 function replayGoStart() {
   _replayBucket = 0;
+  _replayStationState = {};
+  _allStations = [];
+  connections  = [];
+  document.getElementById('event-list').innerHTML = '';
+  _replayNow = new Date(_replayData.start);
   _replayUpdateUI();
 }
 
 function replaySetSpeed(val) {
   _replaySpeed = parseInt(val);
   if (_replayPlaying) {
-    // Restart timer with new speed
     clearInterval(_replayTimer);
-    const intervalMs = (_replayData.bucket_seconds / _replaySpeed) * 1000;
-    _replayTimer = setInterval(_replayStep, Math.max(100, intervalMs));
+    const intervalMs = Math.max(50, (_replayData.bucket_seconds / _replaySpeed) * 1000);
+    _replayTimer = setInterval(_replayStep, intervalMs);
   }
 }
 
 function replaySeek(e) {
   if (!_replayData) return;
-  const tl = document.getElementById('replay-timeline');
+  const tl   = document.getElementById('replay-timeline');
   const rect = tl.getBoundingClientRect();
-  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  _replayBucket = Math.floor(pct * _replayData.n_buckets);
+  const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const targetBucket = Math.floor(pct * _replayData.n_buckets);
+
+  if (targetBucket < _replayBucket) {
+    // Seeking backward — rebuild state from scratch
+    _replayStationState = {};
+    _allStations = [];
+    connections  = [];
+    document.getElementById('event-list').innerHTML = '';
+    _replayBucket = 0;
+    _replayNow = new Date(_replayData.start);
+  }
+  // Step forward to target
+  while (_replayBucket < targetBucket) {
+    _replayBucket++;
+    _replayNow = new Date(new Date(_replayData.start).getTime() +
+      _replayBucket * _replayData.bucket_seconds * 1000);
+    _replayApplyBucketToState(_replayData.buckets[_replayBucket] || []);
+  }
+  _replayBuildConnections();
   _replayUpdateUI();
 }
 
 function _replayStep() {
   if (!_replayData) return;
   if (_replayBucket >= _replayData.n_buckets - 1) {
-    // End of replay
     clearInterval(_replayTimer);
-    _replayTimer = null;
+    _replayTimer   = null;
     _replayPlaying = false;
     document.getElementById('rb-play').textContent = '⏵';
     return;
   }
   _replayBucket++;
-  _replayUpdateUI();
+  _replayNow = new Date(new Date(_replayData.start).getTime() +
+    _replayBucket * _replayData.bucket_seconds * 1000);
+  const bucket = _replayData.buckets[_replayBucket] || [];
+  _replayApplyBucketToState(bucket);
+  _replayBuildConnections();
+  _replayUpdateUI(bucket);
 }
 
-function _replayUpdateUI() {
+function _replayUpdateUI(bucket) {
   if (!_replayData) return;
-  const b = _replayData.buckets[_replayBucket] || [];
+  bucket = bucket || [];
   const pct = _replayData.n_buckets > 1
     ? (_replayBucket / (_replayData.n_buckets - 1)) * 100 : 0;
 
@@ -2679,17 +2827,19 @@ function _replayUpdateUI() {
   document.getElementById('replay-progress').style.width = pct + '%';
   document.getElementById('replay-thumb').style.left = pct + '%';
 
-  // Time label
-  const t_start = new Date(_replayData.start);
-  const t = new Date(t_start.getTime() + _replayBucket * _replayData.bucket_seconds * 1000);
+  // Time label (using replay cursor)
   document.getElementById('replay-time').textContent =
-    t.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' +
-    t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    _replayNow.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' +
+    _replayNow.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
 
-  // Inject events into event stream
-  if (b.length > 0) {
+  // Re-render map and station list with replay-aware age colors
+  renderStations();
+  renderMap();
+
+  // Inject new events into event stream
+  if (bucket.length > 0) {
     const list = document.getElementById('event-list');
-    const newRows = b.map(e => {
+    const newRows = bucket.map(e => {
       const srcHtml = e.source_station
         ? `<span class="event-call src">${e.source_station}</span> → ` : '';
       const dstHtml = e.target_station
@@ -2698,7 +2848,7 @@ function _replayUpdateUI() {
         ? ` <span class="event-call grp">${e.group_name}</span>` : '';
       const snrHtml = e.snr !== null && e.snr !== undefined
         ? `<span class="event-snr">${e.snr > 0?'+':''}${e.snr}dB</span>` : '';
-      return `<div class="event-row" style="border-left:2px solid var(--amber);">
+      return `<div class="event-row" style="border-left:2px solid var(--amber);animation:fadeIn 0.3s ease;">
         <span class="event-time">${fmtTime(e.timestamp)}</span>
         <span class="event-type-badge type-${e.event_type}">${fmtEventType(e.event_type)}</span>
         ${srcHtml}${dstHtml}${grpHtml}${snrHtml}
@@ -2707,27 +2857,12 @@ function _replayUpdateUI() {
     }).join('');
     if (list) {
       list.innerHTML = newRows + list.innerHTML;
-      // Trim to max events
       const rows = list.querySelectorAll('.event-row');
       if (rows.length > MAX_EVENTS) {
         for (let i = MAX_EVENTS; i < rows.length; i++) rows[i].remove();
       }
     }
   }
-}
-
-function _replayRenderStations(stations) {
-  // Temporarily replace _allStations for map rendering
-  _allStations = stations.map(s => ({
-    ...s,
-    active_groups: (s.active_groups || '').split(',').filter(Boolean),
-    grid_status: s.best_grid ? 'found' : 'pending',
-    event_count: 0,
-    is_local: false,
-    snr_min: null, snr_max: null,
-  }));
-  renderStations();
-  renderMap();
 }
 
 // ── POLL LOOPS ────────────────────────────────────────────
