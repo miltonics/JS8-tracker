@@ -1348,6 +1348,30 @@ function loadSettings() {
     if (saved) Object.assign(_settings, JSON.parse(saved));
   } catch(e) {}
   applySettings();
+  // Populate callsign field from backend
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    const el = document.getElementById('s-mycall');
+    if (el && cfg.mycall) el.value = cfg.mycall;
+  }).catch(() => {});
+}
+
+async function saveMycall(val) {
+  const call = val.trim().toUpperCase();
+  if (!call) return;
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mycall: call})
+    });
+    if (r.ok) {
+      const cfg = await r.json();
+      const el = document.getElementById('s-mycall');
+      if (el) el.value = cfg.mycall;
+      // Refresh status so the header updates
+      fetchStatus();
+    }
+  } catch(e) { console.error('saveMycall failed', e); }
 }
 
 function saveSettings() {

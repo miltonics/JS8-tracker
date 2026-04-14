@@ -290,7 +290,8 @@ ZIP3_TO_GRID = {
 def zip_to_grid(zipcode):
     if not zipcode:
         return None
-    z = zipcode.strip().zfill(5)[:3]
+    # Strip zip+4 extension (e.g. "43215-1234" -> "43215")
+    z = zipcode.strip().split('-')[0].strip().zfill(5)[:3]
     return ZIP3_TO_GRID.get(z)
 
 
@@ -345,7 +346,7 @@ def build_db():
                 if len(p) < 18: continue
                 call = p[4].strip().upper()
                 if call:
-                    en_data[call] = (p[7].strip(), p[17].strip()[:5])
+                    en_data[call] = (p[7].strip(), p[18].strip()[:5] if len(p) > 18 else "")
 
     progress(f"  {len(en_data):,} entity records")
 
