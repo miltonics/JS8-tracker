@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JS8-tracker</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%224%22%20fill%3D%22%230a0c0f%22/%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2213%22%20fill%3D%22none%22%20stroke%3D%22%2300b8d4%22%20stroke-width%3D%220.5%22%20opacity%3D%220.3%22/%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%229%22%20fill%3D%22none%22%20stroke%3D%22%2300b8d4%22%20stroke-width%3D%220.5%22%20opacity%3D%220.4%22/%3E%3Cline%20x1%3D%2216%22%20y1%3D%2216%22%20x2%3D%2225%22%20y2%3D%228%22%20stroke%3D%22%2300e57a%22%20stroke-width%3D%221.5%22%20opacity%3D%220.9%22/%3E%3Cline%20x1%3D%2216%22%20y1%3D%2216%22%20x2%3D%2224%22%20y2%3D%2223%22%20stroke%3D%22%23f0a020%22%20stroke-width%3D%221.2%22%20opacity%3D%220.8%22/%3E%3Cline%20x1%3D%2216%22%20y1%3D%2216%22%20x2%3D%227%22%20y2%3D%229%22%20stroke%3D%22%2300e57a%22%20stroke-width%3D%221.2%22%20opacity%3D%220.7%22/%3E%3Ccircle%20cx%3D%2225%22%20cy%3D%228%22%20r%3D%222.5%22%20fill%3D%22%2300e57a%22/%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2223%22%20r%3D%222%22%20fill%3D%22%23f0a020%22/%3E%3Ccircle%20cx%3D%227%22%20cy%3D%229%22%20r%3D%222%22%20fill%3D%22%2300e57a%22%20opacity%3D%220.8%22/%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%224%22%20fill%3D%22%230a0c0f%22%20stroke%3D%22%2300e57a%22%20stroke-width%3D%221.5%22/%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%221.8%22%20fill%3D%22%2300e57a%22/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -78,7 +79,7 @@ html, body {
 #header.collapsed + #main { height: calc(100vh - var(--header-h1) - var(--panel-gap) * 2); }
 #main { height: calc(100vh - var(--header-h) - var(--panel-gap) * 2); }
 
-#logo {
+#logo { display: flex; align-items: center;
   font-family: var(--sans);
   font-weight: 700;
   font-size: 18px;
@@ -1081,7 +1082,7 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
 
   <!-- ROW 1: title + stats + controls -->
   <div id="header-row1" style="position:relative;">
-    <div id="logo">JS8<span>-</span>tracker <span id="version-tag" style="font-size:10px;color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span><span id="replay-mode-badge">⏵ REPLAY</span></div>
+    <div id="logo"><svg width="22" height="22" viewBox="0 0 32 32" style="vertical-align:middle;margin-right:6px;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="4" fill="#0d1117"/><circle cx="16" cy="16" r="13" fill="none" stroke="#00b8d4" stroke-width="0.6" opacity="0.3"/><circle cx="16" cy="16" r="9" fill="none" stroke="#00b8d4" stroke-width="0.6" opacity="0.4"/><line x1="16" y1="16" x2="25" y2="8" stroke="#00e57a" stroke-width="1.5" opacity="0.9"/><line x1="16" y1="16" x2="24" y2="23" stroke="#f0a020" stroke-width="1.2" opacity="0.8"/><line x1="16" y1="16" x2="7" y2="9" stroke="#00e57a" stroke-width="1.2" opacity="0.7"/><circle cx="25" cy="8" r="2.5" fill="#00e57a"/><circle cx="24" cy="23" r="2" fill="#f0a020"/><circle cx="7" cy="9" r="2" fill="#00e57a" opacity="0.8"/><circle cx="16" cy="16" r="4" fill="#0d1117" stroke="#00e57a" stroke-width="1.5"/><circle cx="16" cy="16" r="1.8" fill="#00e57a"/></svg>JS8<span>-</span>tracker <span id="version-tag" style="font-size:10px;color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span><span id="replay-mode-badge">⏵ REPLAY</span></div>
 
     <div id="status-bar">
       <div class="stat-block">
@@ -1348,30 +1349,6 @@ function loadSettings() {
     if (saved) Object.assign(_settings, JSON.parse(saved));
   } catch(e) {}
   applySettings();
-  // Populate callsign field from backend
-  fetch('/api/config').then(r => r.json()).then(cfg => {
-    const el = document.getElementById('s-mycall');
-    if (el && cfg.mycall) el.value = cfg.mycall;
-  }).catch(() => {});
-}
-
-async function saveMycall(val) {
-  const call = val.trim().toUpperCase();
-  if (!call) return;
-  try {
-    const r = await fetch('/api/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mycall: call})
-    });
-    if (r.ok) {
-      const cfg = await r.json();
-      const el = document.getElementById('s-mycall');
-      if (el) el.value = cfg.mycall;
-      // Refresh status so the header updates
-      fetchStatus();
-    }
-  } catch(e) { console.error('saveMycall failed', e); }
 }
 
 function saveSettings() {
