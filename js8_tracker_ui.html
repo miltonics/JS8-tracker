@@ -37,6 +37,12 @@ if (typeof L === 'undefined') {
   --mono:      'Share Tech Mono', monospace;
   --sans:      'Barlow Condensed', sans-serif;
   --header-h:  80px;  /* two-row expanded */
+  --fs-base: 13px;
+  --fs-sm:   11px;
+  --fs-xs:    9px;
+  --fs-lg:   15px;
+  --fs-xl:   18px;
+  --fs-mono: 12px;
   --header-h1:  42px; /* single row collapsed */
   --panel-gap: 4px;
 }
@@ -48,7 +54,7 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--fs-base);
   overflow: hidden;
 }
 
@@ -103,7 +109,7 @@ html, body {
   flex-direction: column;
   line-height: 1.2;
 }
-.stat-label { color: var(--text-mute); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
+.stat-label { color: var(--text-mute); font-size: var(--fs-xs); letter-spacing: 0.1em; text-transform: uppercase; }
 .stat-value { color: var(--text); }
 .stat-value.hi  { color: var(--green); }
 .stat-value.mid { color: var(--amber); }
@@ -249,8 +255,8 @@ html, body {
   color: var(--text-dim);
   line-height: 1.4;
 }
-.station-grid { color: var(--cyan); font-size: 11px; }
-.station-grid-src { color: var(--text-mute); font-size: 9px; }
+.station-grid { color: var(--cyan); font-size: var(--fs-sm); }
+.station-grid-src { color: var(--text-mute); font-size: var(--fs-xs); }
 
 .station-right { text-align: right; }
 
@@ -508,7 +514,7 @@ html, body {
 }
 .group-pill:hover { border-color: var(--cyan); }
 .group-pill-active { background: #003040 !important; border-color: var(--cyan) !important; color: var(--cyan) !important; box-shadow: 0 0 6px var(--cyan); }
-.group-pill .gcnt { color: var(--text-mute); margin-left: 3px; font-size: 9px; }
+.group-pill .gcnt { color: var(--text-mute); margin-left: 3px; font-size: var(--fs-xs); }
 
 /* ── GROUP DETAIL CARD ───────────────────────────────── */
 #group-detail {
@@ -617,7 +623,7 @@ html, body {
   font-weight: bold;
   letter-spacing: 0.08em;
 }
-.mystation-meta { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.mystation-meta { font-size: var(--fs-sm); color: var(--text-dim); margin-top: 2px; }
 
 /* ── POPUP DETAIL ──────────────────────────────────────── */
 .popup-call   { font-size: 14px; color: var(--cyan); font-weight: bold; margin-bottom: 6px; }
@@ -1130,9 +1136,7 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
         <option value="1440">24h</option>
         <option value="2880">48h</option>
       </select>
-      <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;">
-        <input type="checkbox" id="window-all" onchange="onWindowAll(this)" style="accent-color:var(--cyan);cursor:pointer;">All
-      </label>
+
     </div>
 
     <!-- Band filter -->
@@ -1164,8 +1168,6 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
     <div class="ptoggle active" id="pt-events"   onclick="togglePanel('events')">Events</div>
     <div class="ptoggle-sep"></div>
     <div class="ptoggle" id="pt-replay" onclick="openReplaySetup()" title="Replay historical traffic">Replay</div>
-    <div class="ptoggle-sep"></div>
-    <div class="pill" id="compact-btn" onclick="toggleCompact()" title="Compact mode" style="font-size:11px;">Compact</div>
   </div>
 </div>
 
@@ -1226,18 +1228,13 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
     <div class="settings-row">
       <span class="settings-label">Font size</span>
       <div class="settings-control">
-        <button class="settings-btn" onclick="setFontSize(12)">S</button>
-        <button class="settings-btn active" id="fs-m" onclick="setFontSize(13)">M</button>
-        <button class="settings-btn" onclick="setFontSize(14)">L</button>
-        <button class="settings-btn" onclick="setFontSize(15)">XL</button>
+        <button class="settings-btn active" onclick="setFontSize(13)">S</button>
+        <button class="settings-btn" onclick="setFontSize(15)">M</button>
+        <button class="settings-btn" onclick="setFontSize(17)">L</button>
+        <button class="settings-btn" onclick="setFontSize(19)">XL</button>
       </div>
     </div>
-    <div class="settings-row">
-      <span class="settings-label">Compact mode</span>
-      <div class="settings-control">
-        <button class="settings-btn" id="s-compact" onclick="toggleCompact()">Off</button>
-      </div>
-    </div>
+
     <div class="settings-row">
       <span class="settings-label">Callsign</span>
       <div class="settings-control">
@@ -1336,7 +1333,7 @@ const API = 'http://127.0.0.1:5000';
 // ── SETTINGS PERSISTENCE ────────────────────────────────
 const SETTINGS_KEY = 'js8tracker_settings';
 let _settings = {
-  fontSize: 13,
+  fontSize: 13,  // S=13 M=15 L=17 XL=19
   compact: false,
   headerCollapsed: false,
   panelsVisible: { stations: true, map: true, events: true },
@@ -1369,9 +1366,16 @@ function applySettings() {
 
 function setFontSize(size, noSave) {
   _settings.fontSize = size;
-  document.body.style.fontSize = size + 'px';
+  const r = document.documentElement;
+  r.style.setProperty('--fs-base', size + 'px');
+  r.style.setProperty('--fs-sm',   Math.round(size * 0.85) + 'px');
+  r.style.setProperty('--fs-xs',   Math.round(size * 0.72) + 'px');
+  r.style.setProperty('--fs-lg',   Math.round(size * 1.15) + 'px');
+  r.style.setProperty('--fs-xl',   Math.round(size * 1.38) + 'px');
+  r.style.setProperty('--fs-mono', Math.round(size * 0.92) + 'px');
+  const labels = {13:'S', 15:'M', 17:'L', 19:'XL'};
   document.querySelectorAll('.settings-btn[onclick*="setFontSize"]').forEach(b => {
-    b.classList.toggle('active', b.textContent === ['S','M','L','XL'][['12','13','14','15'].indexOf(String(size))]);
+    b.classList.toggle('active', b.textContent.trim() === (labels[size] || ''));
   });
   if (!noSave) saveSettings();
 }
@@ -1663,18 +1667,10 @@ function applyWindow(mins) {
 }
 
 function onWindowSelect(el) {
-  document.getElementById('window-all').checked = false;
   applyWindow(parseInt(el.value));
 }
 
-function onWindowAll(el) {
-  if (el.checked) {
-    applyWindow(0);
-  } else {
-    const sel = document.getElementById('window-select');
-    applyWindow(parseInt(sel ? sel.value : 360));
-  }
-}
+
 
 function setEventFilter(el) {
   document.querySelectorAll('[data-etype]').forEach(e => e.classList.remove('active'));
