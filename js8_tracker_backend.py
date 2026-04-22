@@ -49,7 +49,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.4.6.0"
+BUILD_TAG = "js8-tracker-0.4.5"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days
@@ -100,44 +100,9 @@ HAMQTH_FAIL_TTL  = 3600            # suppress re-lookup of unknown calls for 1 h
 # Offline FCC database (optional) — built by running setup_fcc_db.py
 FCC_DB_PATH = Path(__file__).parent / "fcc_offline.db"
 
-# Runtime config file — overrides defaults below; written by POST /api/config
-CONFIG_FILE = Path(__file__).parent / "js8_tracker_config.json"
-
 # ── USER CONFIG ───────────────────────────────────────────
 # Set your callsign here. This is the only line most users need to change.
-# (Can also be changed at runtime via the settings panel → POST /api/config)
 MYCALL = "KE8SWO"
-
-
-def load_config() -> None:
-    """Load js8_tracker_config.json and override module-level tunables."""
-    global MYCALL, DB_PRUNE_EVENTS_DAYS, DB_PRUNE_CONNECTIONS_DAYS, DB_PRUNE_STATIONS_DAYS
-    if not CONFIG_FILE.exists():
-        return
-    try:
-        data = json.loads(CONFIG_FILE.read_text())
-        if "mycall" in data and isinstance(data["mycall"], str) and data["mycall"].strip():
-            MYCALL = data["mycall"].strip().upper()
-        if "db_prune_events_days" in data:
-            DB_PRUNE_EVENTS_DAYS = int(data["db_prune_events_days"])
-        if "db_prune_connections_days" in data:
-            DB_PRUNE_CONNECTIONS_DAYS = int(data["db_prune_connections_days"])
-        if "db_prune_stations_days" in data:
-            DB_PRUNE_STATIONS_DAYS = int(data["db_prune_stations_days"])
-    except Exception as exc:
-        print(f"[js8-tracker] WARNING: could not load config file: {exc}", flush=True)
-
-
-def save_config() -> None:
-    """Write current runtime tunables to js8_tracker_config.json."""
-    data = {
-        "mycall": MYCALL,
-        "db_prune_events_days": DB_PRUNE_EVENTS_DAYS,
-        "db_prune_connections_days": DB_PRUNE_CONNECTIONS_DAYS,
-        "db_prune_stations_days": DB_PRUNE_STATIONS_DAYS,
-    }
-    CONFIG_FILE.write_text(json.dumps(data, indent=2))
-
 
 # WSJT-X / JS8 UDP constants
 MAGIC = 0xADBCCBDA
@@ -2375,49 +2340,6 @@ def api_config_get() -> dict:
     }
 
 
-class ConfigUpdate(BaseModel):
-    mycall: Optional[str] = None
-    db_prune_events_days: Optional[int] = None
-    db_prune_connections_days: Optional[int] = None
-    db_prune_stations_days: Optional[int] = None
-
-
-@app.post("/api/config")
-def api_config_post(update: ConfigUpdate) -> dict:
-    """Update runtime config and persist to js8_tracker_config.json."""
-    global MYCALL, DB_PRUNE_EVENTS_DAYS, DB_PRUNE_CONNECTIONS_DAYS, DB_PRUNE_STATIONS_DAYS
-
-    if update.mycall is not None:
-        new_call = update.mycall.strip().upper()
-        if not new_call:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=422, detail="mycall cannot be empty")
-        old_call = MYCALL
-        MYCALL = new_call
-        with STATUS_LOCK:
-            STATUS["my_call"] = MYCALL
-        if new_call != old_call:
-            # Un-mark old callsign and register new one
-            con = sqlite3.connect(DB_PATH)
-            try:
-                con.execute("UPDATE stations SET is_local = 0 WHERE callsign = ?", (old_call,))
-                con.commit()
-            finally:
-                con.close()
-            _register_local_station()
-        print(f"[js8-tracker] callsign updated to {MYCALL}", flush=True)
-
-    if update.db_prune_events_days is not None:
-        DB_PRUNE_EVENTS_DAYS = max(1, update.db_prune_events_days)
-    if update.db_prune_connections_days is not None:
-        DB_PRUNE_CONNECTIONS_DAYS = max(1, update.db_prune_connections_days)
-    if update.db_prune_stations_days is not None:
-        DB_PRUNE_STATIONS_DAYS = max(1, update.db_prune_stations_days)
-
-    save_config()
-    return api_config_get()
-
-
 @app.get("/")
 def root():
     return FileResponse("js8_tracker_ui.html")
@@ -2576,7 +2498,6 @@ def run_parser_selfcheck() -> None:
 # ============================================================
 
 if __name__ == "__main__":
-    load_config()
     init_db()
     run_parser_selfcheck()
 
@@ -2640,8 +2561,26 @@ if __name__ == "__main__":
     listener_thread = threading.Thread(target=udp_listener, daemon=True)
     listener_thread.start()
 
-    # Create HTTP socket with SO_REUSEADDR so the port is freed immediately on exit
+    # Free the port if something is still holding it
     import socket as _socket
+    _test = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    _test.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    try:
+        _test.bind((HTTP_HOST, HTTP_PORT))
+        _test.close()
+    except OSError:
+        print(f"[js8-tracker] Port {HTTP_PORT} in use — attempting to free it...", flush=True)
+        import subprocess, sys
+        result = subprocess.run(["fuser", "-k", f"{HTTP_PORT}/tcp"],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            import time as _time; _time.sleep(0.5)
+            print(f"[js8-tracker] Port {HTTP_PORT} freed.", flush=True)
+        else:
+            print(f"[js8-tracker] Could not free port {HTTP_PORT}. Try: fuser -k {HTTP_PORT}/tcp", flush=True)
+            sys.exit(1)
+
+    # Create HTTP socket with SO_REUSEADDR so the port is freed immediately on exit
     http_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     http_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
     http_sock.bind((HTTP_HOST, HTTP_PORT))
