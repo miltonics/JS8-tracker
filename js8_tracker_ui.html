@@ -1141,8 +1141,6 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
         <div class="decay-item"><div class="decay-dot" style="background:var(--text-mute)"></div><span>Stale</span></div>
       </div>
       <div id="rx-indicator" title="RX activity"></div>
-      <!-- Settings -->
-      <div class="pill" onclick="toggleSettings()" title="Settings" style="font-size:var(--fs-base);padding:2px 7px;">⚙</div>
       <!-- Header collapse -->
       <div class="pill" id="header-toggle" onclick="toggleHeader()" title="Collapse header" style="font-size:var(--fs-sm);">▲</div>
     </div>
@@ -1156,6 +1154,8 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
     <div class="ptoggle active" id="pt-events"   onclick="togglePanel('events')">Events</div>
     <div class="ptoggle-sep"></div>
     <div class="ptoggle" id="pt-replay" onclick="openReplaySetup()" title="Replay historical traffic">Replay</div>
+    <div class="ptoggle-sep"></div>
+    <div class="ptoggle" onclick="toggleSettings()" title="Settings" style="letter-spacing:0;">⚙</div>
   </div>
 </div>
 
