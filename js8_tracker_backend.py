@@ -49,7 +49,7 @@ FORWARD_UDP_ENABLED = False
 FORWARD_UDP_HOST = "127.0.0.1"
 FORWARD_UDP_PORT = 2240
 DB_PATH = "js8_tracker_phase2.db"
-BUILD_TAG = "js8-tracker-0.4.5"
+BUILD_TAG = "js8-tracker-0.4.6"
 
 # Database pruning — old rows are deleted automatically in the background
 DB_PRUNE_EVENTS_DAYS      = 7   # keep events for this many days

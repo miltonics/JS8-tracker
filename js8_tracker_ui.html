@@ -1073,7 +1073,10 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
 
   <!-- ROW 1: title + stats + controls -->
   <div id="header-row1" style="position:relative;">
-    <div id="logo"><svg width="22" height="22" viewBox="0 0 32 32" style="vertical-align:middle;margin-right:6px;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="4" fill="#0d1117"/><circle cx="16" cy="16" r="13" fill="none" stroke="#00b8d4" stroke-width="0.6" opacity="0.3"/><circle cx="16" cy="16" r="9" fill="none" stroke="#00b8d4" stroke-width="0.6" opacity="0.4"/><line x1="16" y1="16" x2="25" y2="8" stroke="#00e57a" stroke-width="1.5" opacity="0.9"/><line x1="16" y1="16" x2="24" y2="23" stroke="#f0a020" stroke-width="1.2" opacity="0.8"/><line x1="16" y1="16" x2="7" y2="9" stroke="#00e57a" stroke-width="1.2" opacity="0.7"/><circle cx="25" cy="8" r="2.5" fill="#00e57a"/><circle cx="24" cy="23" r="2" fill="#f0a020"/><circle cx="7" cy="9" r="2" fill="#00e57a" opacity="0.8"/><circle cx="16" cy="16" r="4" fill="#0d1117" stroke="#00e57a" stroke-width="1.5"/><circle cx="16" cy="16" r="1.8" fill="#00e57a"/></svg>JS8<span>-</span>tracker <span id="version-tag" style="font-size:var(--fs-sm);color:var(--text-mute);font-weight:300;letter-spacing:0.08em;">—</span><span id="replay-mode-badge">⏵ REPLAY</span></div>
+    <div id="logo"><svg width="22" height="22" viewBox="0 0 32 32" style="vertical-align:middle;margin-right:6px;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="4" fill="#0d1117"/><circle cx="16" cy="16" r="13" fill="none" stroke="#00b8d4" stroke-width="0.6" opacity="0.3"/><circle cx="16" cy="16" r="9" fill="none" stroke="#00b8d4" stroke-width="0.6" opacity="0.4"/><line x1="16" y1="16" x2="25" y2="8" stroke="#00e57a" stroke-width="1.5" opacity="0.9"/><line x1="16" y1="16" x2="24" y2="23" stroke="#f0a020" stroke-width="1.2" opacity="0.8"/><line x1="16" y1="16" x2="7" y2="9" stroke="#00e57a" stroke-width="1.2" opacity="0.7"/><circle cx="25" cy="8" r="2.5" fill="#00e57a"/><circle cx="24" cy="23" r="2" fill="#f0a020"/><circle cx="7" cy="9" r="2" fill="#00e57a" opacity="0.8"/><circle cx="16" cy="16" r="4" fill="#0d1117" stroke="#00e57a" stroke-width="1.5"/><circle cx="16" cy="16" r="1.8" fill="#00e57a"/></svg>JS8<span>-</span>tracker <div id="version-display" style="display:inline-flex;flex-direction:column;justify-content:center;margin-left:4px;line-height:1.25;vertical-align:middle;">
+        <span id="version-be" style="font-size:var(--fs-xs);color:var(--text-mute);font-family:var(--mono);">be —</span>
+        <span id="version-ui" style="font-size:var(--fs-xs);color:var(--text-mute);font-family:var(--mono);">ui —</span>
+      </div><span id="replay-mode-badge">⏵ REPLAY</span></div>
 
     <div id="status-bar">
       <div class="stat-block">
@@ -1322,7 +1325,7 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
 <script>
 // ── CONFIG ────────────────────────────────────────────────
 const API = 'http://127.0.0.1:5000';
-// version shown from backend BUILD_TAG only
+
 
 // ── SETTINGS PERSISTENCE ────────────────────────────────
 const SETTINGS_KEY = 'js8tracker_settings';
@@ -1533,6 +1536,7 @@ function gridToLatLon(grid) {
 
 // ── HELPERS ───────────────────────────────────────────────
 // _replayNow is null in live mode, set to replay cursor time during replay
+const UI_VERSION = "0.4.6";
 let _replayNow = null;
 
 function _nowMs() {
@@ -1711,8 +1715,16 @@ async function fetchStatus() {
     if (d.last_event_at) {
       document.getElementById('s-lastevt').textContent = fmtAge(d.last_event_at);
     }
-    const vtag = document.getElementById('version-tag');
-    if (vtag) vtag.textContent = d.build_tag || '';
+    const beEl = document.getElementById('version-be');
+    const uiEl = document.getElementById('version-ui');
+    if (beEl) beEl.textContent = 'be ' + (d.build_tag || '—');
+    if (uiEl) uiEl.textContent = 'ui ' + UI_VERSION;
+    // Amber if versions don't match
+    if (beEl && uiEl && d.build_tag) {
+      const match = d.build_tag.endsWith(UI_VERSION);
+      beEl.style.color = match ? 'var(--text-mute)' : 'var(--amber)';
+      uiEl.style.color = match ? 'var(--text-mute)' : 'var(--amber)';
+    }
     if (d.my_call && d.my_call !== MY_CALL) {
       MY_CALL = d.my_call;
       document.getElementById('my-call').textContent = d.my_call;
