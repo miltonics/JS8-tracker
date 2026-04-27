@@ -158,12 +158,12 @@ html, body {
 #panel-stations { width: 280px; min-width: 120px; flex-shrink: 0; }
 #panel-map      { flex: 1; min-width: 200px; }
 #panel-events   { width: 300px; min-width: 120px; flex-shrink: 0; }
-#panel-stations.hidden, #panel-map.hidden, #panel-events.hidden { display: none !important; }
+#panel-stations.hidden, #panel-map.hidden, #panel-events.hidden, #panel-graph.hidden { display: none !important; }
 .drag-handle.hidden { display: none !important; }
 #panel-stations { display: flex; }
 #panel-map      { display: flex; }
 #panel-events   { display: flex; }
-#panel-stations.hidden, #panel-map.hidden, #panel-events.hidden { display: none; }
+#panel-stations.hidden, #panel-map.hidden, #panel-events.hidden, #panel-graph.hidden { display: none; }
 
 /* ── PANELS ───────────────────────────────────────────── */
 .panel {
@@ -1057,6 +1057,60 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
 }
 .replay-start-btn:hover { background: var(--amber); color: #000; }
 
+/* ── GRAPH PANEL ─────────────────────────────────────────── */
+#panel-graph {
+  width: 300px;
+  min-width: 160px;
+  flex-shrink: 0;
+  /* flex:1 applied dynamically when graph is sole panel */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+#panel-graph.hidden { display: none !important; }
+#graph-svg {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+#graph-svg:active { cursor: grabbing; }
+.graph-node circle {
+  stroke-width: 1.5px;
+  cursor: pointer;
+  transition: r 0.2s;
+}
+.graph-node circle:hover { stroke: #fff; stroke-width: 2px; }
+.graph-node text {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  fill: var(--text-dim);
+  pointer-events: none;
+  text-anchor: middle;
+  dominant-baseline: auto;
+}
+.graph-node.own-station circle { stroke: var(--cyan); stroke-width: 2.5px; }
+.graph-node.own-station text { fill: var(--cyan); }
+.graph-link {
+  stroke-opacity: 0.5;
+  stroke-width: 1px;
+}
+.graph-link.direct { stroke: var(--green); }
+.graph-link.reported { stroke: var(--amber); stroke-dasharray: 4 3; }
+#graph-empty {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-mute);
+  font-size: var(--fs-sm);
+  text-align: center;
+  pointer-events: none;
+}
+
 /* ── RESPONSIVE ──────────────────────────────────────── */
 @media (max-width: 900px) {
   #main { grid-template-columns: 1fr; grid-template-rows: auto 300px auto; overflow-y: auto; }
@@ -1065,6 +1119,7 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
 </style>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 </head>
 <body>
 
@@ -1152,6 +1207,7 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
     <div class="ptoggle active" id="pt-stations" onclick="togglePanel('stations')">Stations</div>
     <div class="ptoggle active" id="pt-map"      onclick="togglePanel('map')">Map</div>
     <div class="ptoggle active" id="pt-events"   onclick="togglePanel('events')">Events</div>
+    <div class="ptoggle" id="pt-graph" onclick="togglePanel('graph')" title="Network graph">Graph</div>
     <div class="ptoggle-sep"></div>
     <div class="ptoggle" id="pt-replay" onclick="openReplaySetup()" title="Replay historical traffic">Replay</div>
     <div class="ptoggle-sep"></div>
@@ -1320,6 +1376,20 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
   </div>
   </div>
 
+  <div class="drag-handle hidden" id="drag-graph" title="Drag to resize"></div>
+
+  <!-- GRAPH PANEL -->
+  <div class="panel hidden" id="panel-graph">
+    <div class="panel-header">
+      <span class="panel-title">Network Graph</span>
+      <span class="panel-count" id="graph-node-count">0</span>
+    </div>
+    <div style="flex:1;position:relative;overflow:hidden;">
+      <svg id="graph-svg" style="width:100%;height:100%;"></svg>
+      <div id="graph-empty" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-mute);font-size:var(--fs-sm);text-align:center;pointer-events:none;">No connections yet</div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -1333,7 +1403,7 @@ let _settings = {
   fontSize: 13,  // S=13 M=15 L=17 XL=19
   compact: false,
   headerCollapsed: false,
-  panelsVisible: { stations: true, map: true, events: true },
+  panelsVisible: { stations: true, map: true, events: true, graph: false },
   connectionFadeMinutes: 1,
   connectionDirectOnly: false,
 };
@@ -1343,6 +1413,9 @@ function loadSettings() {
     const saved = localStorage.getItem(SETTINGS_KEY);
     if (saved) Object.assign(_settings, JSON.parse(saved));
   } catch(e) {}
+  // Ensure new settings keys exist even when upgrading from old localStorage
+  if (!_settings.panelsVisible) _settings.panelsVisible = { stations: true, map: true, events: true, graph: false };
+  if (_settings.panelsVisible.graph === undefined) _settings.panelsVisible.graph = false;
   applySettings();
 }
 
@@ -1368,6 +1441,10 @@ function applySettings() {
   Object.keys(_settings.panelsVisible).forEach(p => {
     _applyPanelVisible(p, _settings.panelsVisible[p], true);
   });
+  // Init graph if it was saved as visible
+  if (_settings.panelsVisible.graph) {
+    setTimeout(initGraph, 500);
+  }
 }
 
 function setFontSize(size, noSave) {
@@ -1435,21 +1512,51 @@ function _applyPanelVisible(panel, visible, noSave) {
   const s = _settings.panelsVisible.stations;
   const m = _settings.panelsVisible.map;
   const e = _settings.panelsVisible.events;
+  const g = _settings.panelsVisible.graph;
   const dl = document.getElementById('drag-left');
   const dr = document.getElementById('drag-right');
   if (dl) dl.classList.toggle('hidden', !(s && m) && !(s && e));
   if (dr) dr.classList.toggle('hidden', !(m && e) && !(s && e));
+  // Start/stop graph simulation
+  if (panel === 'graph') {
+    if (visible) { setTimeout(initGraph, 100); }
+    else { stopGraph(); }
+  }
 
-  // When map hidden and both side panels visible, make them equal flex
+  // Flex layout — single visible panel fills full width
   const stEl = document.getElementById('panel-stations');
   const evEl = document.getElementById('panel-events');
-  if (!m && s && e) {
-    if (stEl) stEl.style.flex = '1';
-    if (evEl) { evEl.style.flex = '1'; evEl.style.width = 'auto'; }
+  const grEl = document.getElementById('panel-graph');
+  const visCount = [s, m, e, g].filter(Boolean).length;
+
+  if (visCount === 1) {
+    // Only one panel open — give it all the space
+    if (s && stEl) { stEl.style.flex = '1'; stEl.style.width = 'auto'; }
+    if (e && evEl) { evEl.style.flex = '1'; evEl.style.width = 'auto'; }
+    if (g && grEl) { grEl.style.flex = '1'; grEl.style.width = 'auto'; }
   } else {
+    // Multiple panels — side panels fixed width, map/graph flex
     if (stEl) stEl.style.flex = '';
     if (evEl) { evEl.style.flex = ''; evEl.style.width = evEl._savedWidth || '300px'; }
+    if (grEl) {
+      if (!m) {
+        // No map — graph shares space equally
+        grEl.style.flex = '1'; grEl.style.width = 'auto';
+      } else {
+        // Map present — graph is fixed resizable width
+        grEl.style.flex = ''; grEl.style.width = grEl._savedWidth || '300px';
+      }
+    }
+    // If map hidden, stations/events/graph share equally
+    if (!m && s && e && !g) {
+      if (stEl) stEl.style.flex = '1';
+      if (evEl) { evEl.style.flex = '1'; evEl.style.width = 'auto'; }
+    }
   }
+
+  // Show/hide drag-graph handle
+  const dg = document.getElementById('drag-graph');
+  if (dg) dg.classList.toggle('hidden', !g || visCount <= 1);
 
   setTimeout(() => { try { map.invalidateSize(); } catch(e2) {} }, 50);
   if (!noSave) saveSettings();
@@ -1536,7 +1643,7 @@ function gridToLatLon(grid) {
 
 // ── HELPERS ───────────────────────────────────────────────
 // _replayNow is null in live mode, set to replay cursor time during replay
-const UI_VERSION = "0.4.6";
+const UI_VERSION = "0.4.6.2";
 let _replayNow = null;
 
 function _nowMs() {
@@ -2507,6 +2614,7 @@ setInterval(tickPendingTimers, 1000);
 function initDragHandles() {
   setupDragHandle('drag-left',  'panel-stations', 'left',  120, 600);
   setupDragHandle('drag-right', 'panel-events',   'right', 120, 600);
+  setupDragHandle('drag-graph',  'panel-graph',    'right', 160, 1400);
 }
 
 function setupDragHandle(handleId, panelId, side, minW, maxW) {
@@ -2530,6 +2638,7 @@ function setupDragHandle(handleId, panelId, side, minW, maxW) {
       ));
       panel.style.width = newW + 'px';
       panel._savedWidth = newW + 'px';
+      panel.style.flex = '';
       try { map.invalidateSize(); } catch(err) {}
     }
 
@@ -2884,6 +2993,169 @@ function _replayUpdateUI(bucket) {
         for (let i = MAX_EVENTS; i < rows.length; i++) rows[i].remove();
       }
     }
+  }
+}
+
+// ── NETWORK GRAPH ────────────────────────────────────────
+let _graphSim     = null;
+let _graphRunning = false;
+
+function stopGraph() {
+  if (_graphSim) { _graphSim.stop(); _graphSim = null; }
+  _graphRunning = false;
+}
+
+function initGraph() {
+  if (!_settings.panelsVisible.graph) return;
+  _graphRunning = true;
+  renderGraph();
+}
+
+function renderGraph() {
+  if (!_graphRunning) return;
+
+  const panel = document.getElementById('panel-graph');
+  const svgEl = document.getElementById('graph-svg');
+  if (!panel || !svgEl) return;
+
+  const W = panel.clientWidth  || 300;
+  const H = (panel.clientHeight || 400) - 32; // minus header
+
+  // Build nodes from stations
+  const myCall = MY_CALL || _myCall;
+  const nodes = _allStations
+    .filter(s => s.best_grid || s.callsign === myCall)
+    .map(s => ({
+      id: s.callsign,
+      age: ageClass(s.last_heard_at),
+      layer: s.hearing_layer,
+      conns: 0,
+      isOwn: s.callsign === myCall,
+    }));
+
+  // Add own station if not already there
+  if (!nodes.find(n => n.isOwn)) {
+    nodes.push({ id: myCall, age: 'current', layer: 'direct', conns: 0, isOwn: true });
+  }
+
+  const nodeMap = {};
+  nodes.forEach(n => nodeMap[n.id] = n);
+
+  // Build edges from connections
+  const links = [];
+  connections.forEach(c => {
+    if (c.target_type === 'group') return;
+    if (!nodeMap[c.source] || !nodeMap[c.target]) return;
+    nodeMap[c.source].conns++;
+    nodeMap[c.target].conns++;
+    links.push({
+      source: c.source,
+      target: c.target,
+      layer: c.hearing_layer,
+      weight: c.weight,
+    });
+  });
+
+  // Update empty state
+  const emptyEl = document.getElementById('graph-empty');
+  if (emptyEl) emptyEl.style.display = nodes.length < 2 ? 'block' : 'none';
+  document.getElementById('graph-node-count').textContent = nodes.length;
+
+  // Stop old sim
+  if (_graphSim) _graphSim.stop();
+
+  // Set up SVG
+  const svg = d3.select('#graph-svg')
+    .attr('width', W)
+    .attr('height', H);
+  svg.selectAll('*').remove();
+
+  // Add zoom/pan
+  const g = svg.append('g');
+  svg.call(d3.zoom()
+    .scaleExtent([0.3, 3])
+    .on('zoom', e => g.attr('transform', e.transform))
+  );
+
+  // Draw links
+  const link = g.append('g')
+    .selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('class', d => 'graph-link ' + (d.layer || 'reported'))
+    .attr('stroke-width', d => Math.max(1, (d.weight || 0.5) * 2));
+
+  // Draw nodes
+  const node = g.append('g')
+    .selectAll('g')
+    .data(nodes)
+    .join('g')
+    .attr('class', d => 'graph-node' + (d.isOwn ? ' own-station' : ''))
+    .call(d3.drag()
+      .on('start', (e, d) => {
+        if (!e.active) _graphSim.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => {
+        if (!e.active) _graphSim.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      })
+    )
+    .on('click', (e, d) => selectStation(d.id));
+
+  // Node circles — size by connection count
+  node.append('circle')
+    .attr('r', d => d.isOwn ? 12 : Math.max(5, Math.min(10, 5 + d.conns)))
+    .attr('fill', d => {
+      if (d.isOwn) return 'var(--bg2)';
+      if (d.age === 'current') return 'var(--green)';
+      if (d.age === 'recent')  return 'var(--amber)';
+      return 'var(--text-mute)';
+    })
+    .attr('stroke', d => {
+      if (d.isOwn) return 'var(--cyan)';
+      if (d.age === 'current') return 'var(--green)';
+      if (d.age === 'recent')  return 'var(--amber)';
+      return 'var(--text-mute)';
+    });
+
+  // Own station center dot
+  node.filter(d => d.isOwn)
+    .append('circle')
+    .attr('r', 4)
+    .attr('fill', 'var(--cyan)');
+
+  // Callsign labels
+  node.append('text')
+    .attr('dy', d => (d.isOwn ? 12 : Math.max(5, Math.min(10, 5 + d.conns))) + 10)
+    .text(d => d.id);
+
+  // Force simulation
+  _graphSim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(80))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide().radius(d => d.isOwn ? 20 : 16))
+    .on('tick', () => {
+      link
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+      node.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+  // Pin own station near center initially
+  const own = nodes.find(n => n.isOwn);
+  if (own) { own.fx = W / 2; own.fy = H / 2; }
+  setTimeout(() => { if (own) { own.fx = null; own.fy = null; } }, 2000);
+}
+
+// Refresh graph when data updates (if visible)
+function maybeRefreshGraph() {
+  if (_settings.panelsVisible.graph && _graphRunning) {
+    renderGraph();
   }
 }
 
