@@ -1185,7 +1185,8 @@ body.replay-mode #replay-mode-badge { display: inline-block; }
     <!-- Band filter -->
     <div style="display:flex;gap:4px;align-items:center;">
       <span style="font-size:var(--fs-xs);color:var(--text-mute);letter-spacing:.1em;text-transform:uppercase;margin-right:4px;">Band</span>
-      <div class="pill band-active" id="band-auto" onclick="setBand('auto')" title="Follow current frequency">Auto</div>
+      <div class="pill band-active" id="band-auto" onclick="setBand('auto')" title="Follow current dial frequency">Auto</div>
+      <div class="pill" id="band-all" onclick="setBand(null)" title="Show all bands">All</div>
       <div id="band-pills" style="display:flex;gap:4px;"></div>
     </div>
 
@@ -1730,8 +1731,9 @@ function fmtEventType(etype) {
 // ── BAND FILTER ──────────────────────────────────────────
 function setBand(band) {
   activeBand = band;
-  // Update pill styles
   document.getElementById('band-auto').classList.toggle('band-active', band === 'auto');
+  const allPill = document.getElementById('band-all');
+  if (allPill) allPill.classList.toggle('band-active', band === null);
   document.querySelectorAll('.band-pill').forEach(p => {
     p.classList.toggle('band-active', p.dataset.band === band);
   });
@@ -1739,12 +1741,13 @@ function setBand(band) {
   fetchEvents();
   fetchConnections();
   fetchGroups();
+  maybeRefreshGraph();
 }
 
 function updateBandPills(bands) {
   const strip = document.getElementById('band-pills');
-  // Add any new bands
   bands.forEach(b => {
+    if (!b) return;
     if (!_knownBands.has(b)) {
       _knownBands.add(b);
       const pill = document.createElement('div');
@@ -1756,10 +1759,20 @@ function updateBandPills(bands) {
       strip.appendChild(pill);
     }
   });
-  // Update active state
   document.querySelectorAll('.band-pill').forEach(p => {
     p.classList.toggle('band-active', p.dataset.band === activeBand);
   });
+}
+
+async function fetchAllBands() {
+  // Fetch bands without filter to populate all available band pills
+  try {
+    const r = await fetch(`${API}/api/stations?minutes=${activeWindowMin || 360}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const bands = [...new Set(data.filter(s => s.last_band).map(s => s.last_band))].sort();
+    if (bands.length) updateBandPills(bands);
+  } catch(e) {}
 }
 
 function getActiveBandParam() {
@@ -2996,6 +3009,23 @@ function _replayUpdateUI(bucket) {
   }
 }
 
+// Band colors for graph nodes
+const BAND_COLORS = {
+  '160m': '#9b59b6',
+  '80m':  '#e74c3c',
+  '40m':  '#e67e22',
+  '30m':  '#f1c40f',
+  '20m':  '#2ecc71',
+  '17m':  '#1abc9c',
+  '15m':  '#3498db',
+  '12m':  '#0066cc',
+  '10m':  '#00b8d4',
+  '6m':   '#ffffff',
+};
+function bandColor(band) {
+  return BAND_COLORS[band] || 'var(--text-mute)';
+}
+
 // ── NETWORK GRAPH ────────────────────────────────────────
 let _graphSim     = null;
 let _graphRunning = false;
@@ -3021,16 +3051,22 @@ function renderGraph() {
   const W = panel.clientWidth  || 300;
   const H = (panel.clientHeight || 400) - 32; // minus header
 
-  // Build nodes from stations
+  // Build nodes from stations — respects band filter
   const myCall = MY_CALL || _myCall;
+  const activeBandFilter = getActiveBandParam();
   const nodes = _allStations
-    .filter(s => s.best_grid || s.callsign === myCall)
+    .filter(s => {
+      if (s.callsign === myCall) return true;
+      if (activeBandFilter && s.last_band && s.last_band !== activeBandFilter) return false;
+      return true;
+    })
     .map(s => ({
       id: s.callsign,
       age: ageClass(s.last_heard_at),
       layer: s.hearing_layer,
       conns: 0,
       isOwn: s.callsign === myCall,
+      band: s.last_band || null,
     }));
 
   // Add own station if not already there
@@ -3115,10 +3151,17 @@ function renderGraph() {
     })
     .attr('stroke', d => {
       if (d.isOwn) return 'var(--cyan)';
-      if (d.age === 'current') return 'var(--green)';
-      if (d.age === 'recent')  return 'var(--amber)';
-      return 'var(--text-mute)';
-    });
+      return d.band ? bandColor(d.band) : (d.age === 'current' ? 'var(--green)' : d.age === 'recent' ? 'var(--amber)' : 'var(--text-mute)');
+    })
+    .attr('stroke-width', d => d.isOwn ? 2.5 : (d.band ? 2 : 1.5));
+
+  // Band label under callsign for nodes with known band
+  node.filter(d => d.band && !d.isOwn)
+    .append('text')
+    .attr('dy', d => (Math.max(5, Math.min(10, 5 + d.conns))) + 20)
+    .attr('style', 'font-size:8px;')
+    .attr('fill', d => bandColor(d.band))
+    .text(d => d.band);
 
   // Own station center dot
   node.filter(d => d.isOwn)
@@ -3170,12 +3213,14 @@ async function pollAll() {
 
 loadSettings();
 initDragHandles();
+fetchAllBands();
 pollAll();
 setInterval(() => { if (!_replayNow) fetchStatus();      }, POLL_STATUS_MS);
 setInterval(() => { if (!_replayNow) fetchStations();    }, POLL_STATIONS_MS);
 setInterval(() => { if (!_replayNow) fetchEvents();      }, POLL_EVENTS_MS);
 setInterval(() => { if (!_replayNow) fetchConnections(); }, POLL_CONNS_MS);
 setInterval(() => { if (!_replayNow) fetchGroups();      }, POLL_CONNS_MS);
+setInterval(() => { if (!_replayNow) fetchAllBands();    }, 30000);
 
 // Refresh ages on station list every 30s without a full API call
 setInterval(() => {
